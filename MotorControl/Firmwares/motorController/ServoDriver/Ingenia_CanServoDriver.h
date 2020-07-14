@@ -24,6 +24,7 @@ typedef struct
 	uint8_t _isRegistered;
 	uint8_t _u8Node;
 	uint8_t _isInitialAngleDeterminationProcessFinished;
+	uint16_t statusword;
 	int32_t posActual;
 	int32_t veloActual;
 } Servo_t;
