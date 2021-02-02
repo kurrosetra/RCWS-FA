@@ -46,3 +46,15 @@ bool ring_buffer_available(Ring_Buffer_t *buffer)
 {
 	return (buffer->head != buffer->tail);
 }
+
+uint16_t ring_buffer_left(Ring_Buffer_t *buffer)
+{
+	if (buffer->head == buffer->tail)
+		return RING_BUFFER_SIZE;
+	else if (buffer->head > buffer->tail)
+		return RING_BUFFER_SIZE - (buffer->head - buffer->tail);
+	else if (buffer->head < buffer->tail)
+		return buffer->tail - buffer->head;
+
+	return 0;
+}

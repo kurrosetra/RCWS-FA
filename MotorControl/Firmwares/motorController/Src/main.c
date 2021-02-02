@@ -17,7 +17,6 @@
  ******************************************************************************
  */
 /* USER CODE END Header */
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
@@ -42,6 +41,14 @@ typedef enum
 	LIM_SWITCH_ELEVATION_DOWN
 } LimitSwitchBit_e;
 
+typedef union
+{
+	float f;
+	uint32_t u32;
+	int32_t i32;
+	uint8_t b[4];
+} Union_u;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -49,9 +56,10 @@ typedef enum
 #define DEBUG					1
 
 #if DEBUG==1
+#	define DEBUG_MTR_POSVELO	1
 #	define DEBUG_INGENIA_DRIVER	0
 #	if DEBUG_INGENIA_DRIVER==1
-#		define MTR_ID			0x21
+#		define MTR_ID			0x20
 #	endif	//if DEBUG_INGENIA_DRIVER==1
 #endif	//if DEBUG==1
 
@@ -78,9 +86,10 @@ typedef enum
 #define bitClear(value, bit) ((value) &= ~(1UL << (bit)))
 #define bitWrite(value, bit, bitvalue) (bitvalue ? bitSet(value, bit) : bitClear(value, bit))
 
-#define MOTOR_MAX_SPEED			115000UL	//1750RPM
+#define MOTOR_MAX_SPEED			116500UL	//1750RPM
 #define MOTOR_MAX_ACCEL			2500000UL
-#define MOTOR_UPDATE_TIMEOUT	50
+
+#define MOTOR_UPDATE_TIMEOUT	5
 
 /* USER CODE END PD */
 
@@ -171,6 +180,8 @@ typedef struct
 	Servo_t *servo;
 	uint32_t prevSpeed;
 	bool direction;
+	float relPosition;
+	float velo;
 } TServoState;
 TServoState pan;
 TServoState tilt;
@@ -196,17 +207,14 @@ typedef struct
 
 TCanRecvBuffer canRecvPanel = { CAN_ID_RWS_PNL_MTR, false, { 0 }, 7, 0 };
 TCanRecvBuffer canRecvButton = { CAN_ID_RWS_BUTTON, false, { 0 }, 3, 0 };
-//TCanRecvBuffer canRecvMotor = { CAN_ID_RWS_MOTOR, false, { 0 }, 2, 0 };
-//TCanRecvBuffer canRecvOptLrf = { CAN_ID_RWS_OPT_LRF, false, { 0 }, 3, 0 };
-//TCanRecvBuffer canRecvOptImu = { CAN_ID_RWS_OPT_IMU, false, { 0 }, 8, 0 };
-//TCanRecvBuffer canRecvOptCam = { CAN_ID_RWS_OPT_CAM, false, { 0 }, 1, 0 };
 
-//TCanSendBuffer canSendMotorCommand = { CAN_ID_RWS_PNL_MTR, { 0 }, 7 };
-//TCanSendBuffer canSendButton = { CAN_ID_RWS_BUTTON, { 0 }, 3 };
 TCanSendBuffer canSendMotor = { CAN_ID_RWS_MOTOR, { 0 }, 2 };
-//TCanSendBuffer canSendOptLrf = { CAN_ID_RWS_OPT_LRF, { 0 }, 3 };
-//TCanSendBuffer canSendOptImu = { CAN_ID_RWS_OPT_IMU, { 0 }, 8 };
-//TCanSendBuffer canSendOptCam = { CAN_ID_RWS_OPT_CAM, { 0 }, 1 };
+TCanSendBuffer canSendMotorAngle = { CAN_ID_RWS_MTR_STAB_ANGLE, { 0 }, 8 };
+TCanSendBuffer canSendMotorSpeed = { CAN_ID_RWS_MTR_STAB_SPD, { 0 }, 8 };
+
+#if DEBUG_MTR_POSVELO==1
+volatile uint32_t countTPDO4 = 0;
+#endif	//if DEBUG_MTR_POSVELO==1
 
 /* USER CODE END PV */
 
@@ -225,6 +233,7 @@ static void debugMotor();
 #endif	//if DEBUG_INGENIA_DRIVER==1
 
 static HAL_StatusTypeDef motorInit();
+static void motorStop(TServoState *motor);
 static void motorSpeed(TServoState *motor, int32_t spd);
 static void motorHandler();
 static void busCommandParsing();
@@ -326,6 +335,11 @@ int main(void)
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	uint32_t millis;
+#if DEBUG_MTR_POSVELO==1
+	uint32_t countTpdoTimer = 0;
+	Union_u p, v;
+
+#endif	//if DEBUG_INGENIA_DRIVER==1
 
 	while (1) {
 		millis = HAL_GetTick();
@@ -334,6 +348,65 @@ int main(void)
 
 		/* USER CODE BEGIN 3 */
 		/* TODO BEGIN LOOP*/
+#if DEBUG_MTR_POSVELO==1
+		uint8_t _dataRpdo[8];
+		if (HAL_GetTick() >= countTpdoTimer) {
+			countTpdoTimer = HAL_GetTick() + 1000;
+
+			bufLen = sprintf(buf, "%stpdo4= %d/s", vt100_lineX[11], countTPDO4);
+			countTPDO4 = 0;
+			serial_write_str(&debug, buf, bufLen);
+		}
+
+		if (serial_available(&debug)) {
+			char c = serial_read(&debug);
+
+			if (c == 'T') {
+				bufLen = sprintf(buf, "%smotor enable\r\n", vt100_lineX[12]);
+				serial_write_str(&debug, buf, bufLen);
+				_dataRpdo[0] = 0xF;
+				_dataRpdo[1] = 0;
+				Ingenia_write_rpdo(tilt.servo, COB_RPDO1, _dataRpdo, 2);
+			}
+			if (c == 't') {
+				bufLen = sprintf(buf, "%smotor disable\r\n", vt100_lineX[12]);
+				serial_write_str(&debug, buf, bufLen);
+				_dataRpdo[0] = 0x7;
+				_dataRpdo[1] = 0;
+				Ingenia_write_rpdo(tilt.servo, COB_RPDO1, _dataRpdo, 2);
+			}
+			else if (c == 's') {
+				memset(_dataRpdo, 0, 8);
+				v.u32 = 0x500;
+				p.i32 = 4000;
+				for ( int i = 0; i < 4; i++ ) {
+					_dataRpdo[i] = v.b[i];
+					_dataRpdo[i + 4] = p.b[i];
+				}
+				Ingenia_write_rpdo(tilt.servo, COB_RPDO2, _dataRpdo, 8);
+				bufLen = sprintf(buf, "%sSet new V:0x500 P:4000c", vt100_lineX[12]);
+				serial_write_str(&debug, buf, bufLen);
+			}
+			else if (c == '>') {
+				p.i32 = tilt.servo->posActual + 4000;
+				Ingenia_setTargetPositionVelocity(tilt.servo, p.i32, 0x500, 1, 0, 0);
+				bufLen = sprintf(buf, "%sto %dc w/ 500c/s", vt100_lineX[12], p.i32);
+				serial_write_str(&debug, buf, bufLen);
+			}
+			else if (c == '<') {
+				p.i32 = tilt.servo->posActual - 4000;
+				Ingenia_setTargetPositionVelocity(tilt.servo, p.i32, 0x500, 1, 0, 0);
+				bufLen = sprintf(buf, "%sto %dc w/ 500c/s", vt100_lineX[12], p.i32);
+				serial_write_str(&debug, buf, bufLen);
+			}
+			else if (c == '0') {
+				Ingenia_setTargetPositionVelocity(tilt.servo, 0, 0, 1, 0, 1);
+				bufLen = sprintf(buf, "%sMotor Stop!", vt100_lineX[12], p.i32);
+				serial_write_str(&debug, buf, bufLen);
+			}
+
+		}
+#endif	//if DEBUG_MTR_POSVELO==1
 
 		if (millis >= buttonCommandTimeout) {
 			HAL_GPIO_WritePin(TRIGGER_ENABLE_GPIO_Port, TRIGGER_ENABLE_Pin, GPIO_PIN_RESET);
@@ -349,10 +422,6 @@ int main(void)
 					bitRead(canRecvButton.data[0], 0));
 
 			cockStart = bitRead(canRecvButton.data[0], 1);
-#if DEBUG==1
-
-#endif	//if DEBUG==1
-
 		}
 
 		if (millis >= motorCommandTimeout && canRecvPanel.online) {
@@ -393,7 +462,8 @@ void SystemClock_Config(void)
 	__HAL_RCC_PWR_CLK_ENABLE()
 	;
 	__HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
-	/** Initializes the CPU, AHB and APB busses clocks
+	/** Initializes the RCC Oscillators according to the specified parameters
+	 * in the RCC_OscInitTypeDef structure.
 	 */
 	RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI | RCC_OSCILLATORTYPE_HSE;
 	RCC_OscInitStruct.HSEState = RCC_HSE_ON;
@@ -413,7 +483,7 @@ void SystemClock_Config(void)
 	if (HAL_PWREx_EnableOverDrive() != HAL_OK) {
 		Error_Handler();
 	}
-	/** Initializes the CPU, AHB and APB busses clocks
+	/** Initializes the CPU, AHB and APB buses clocks
 	 */
 	RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1
 			| RCC_CLOCKTYPE_PCLK2;
@@ -443,11 +513,11 @@ static void MX_CAN1_Init(void)
 
 	/* USER CODE END CAN1_Init 1 */
 	hcan1.Instance = CAN1;
-	hcan1.Init.Prescaler = 5;
+	hcan1.Init.Prescaler = 3;
 	hcan1.Init.Mode = CAN_MODE_NORMAL;
 	hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
-	hcan1.Init.TimeSeg1 = CAN_BS1_7TQ;
-	hcan1.Init.TimeSeg2 = CAN_BS2_1TQ;
+	hcan1.Init.TimeSeg1 = CAN_BS1_12TQ;
+	hcan1.Init.TimeSeg2 = CAN_BS2_2TQ;
 	hcan1.Init.TimeTriggeredMode = DISABLE;
 	hcan1.Init.AutoBusOff = DISABLE;
 	hcan1.Init.AutoWakeUp = DISABLE;
@@ -479,10 +549,10 @@ static void MX_CAN2_Init(void)
 
 	/* USER CODE END CAN2_Init 1 */
 	hcan2.Instance = CAN2;
-	hcan2.Init.Prescaler = 12;
+	hcan2.Init.Prescaler = 10;
 	hcan2.Init.Mode = CAN_MODE_NORMAL;
 	hcan2.Init.SyncJumpWidth = CAN_SJW_1TQ;
-	hcan2.Init.TimeSeg1 = CAN_BS1_12TQ;
+	hcan2.Init.TimeSeg1 = CAN_BS1_15TQ;
 	hcan2.Init.TimeSeg2 = CAN_BS2_2TQ;
 	hcan2.Init.TimeTriggeredMode = DISABLE;
 	hcan2.Init.AutoBusOff = DISABLE;
@@ -719,10 +789,12 @@ void EXTI3_IRQHandler(void)
 
 static void busSendingHandler()
 {
-	static uint32_t _timer = 1000;
+	static uint32_t _stateTimer = 1000;
+	static uint32_t _angleTimer = 1000;
+	static uint32_t _angularSpeedTimer = 1000;
 
-	if (HAL_GetTick() >= _timer) {
-		_timer = HAL_GetTick() + 100;
+	if (HAL_GetTick() >= _stateTimer) {
+		_stateTimer = HAL_GetTick() + 100;
 
 		bitWrite(canSendMotor.data[0], 0, pan.enable);
 		bitWrite(canSendMotor.data[0], 1, tilt.enable);
@@ -734,7 +806,80 @@ static void busSendingHandler()
 		memcpy(busTxBuffer, canSendMotor.data, canSendMotor.size);
 		busTxHeader->DLC = canSendMotor.size;
 		if (HAL_CAN_AddTxMessage(&hcan2, busTxHeader, busTxBuffer, busTxMailBox) != HAL_OK)
-			_timer = HAL_GetTick() + 5;
+			_stateTimer = HAL_GetTick() + 10;
+
+#if DEBUG==1
+		Union_u u, w;
+
+		u.f = C_TO_DEG_AZ(pan.servo->posActual);
+		w.f = C_TO_DEG_AZ(pan.servo->veloActual);
+		bufLen = sprintf(buf, "%sPAN: P= %d > %.3f\tV= %d > %.3f", vt100_lineX[9],
+				pan.servo->posActual, u.f, pan.servo->veloActual, w.f);
+		serial_write_str(&debug, buf, bufLen);
+
+		u.f = C_TO_DEG_EL(tilt.servo->posActual);
+		w.f = C_TO_DEG_EL(tilt.servo->veloActual);
+		bufLen = sprintf(buf, "%sTILT: P= %d > %.3f\tV= %d > %.3f", vt100_lineX[10],
+				tilt.servo->posActual, u.f, tilt.servo->veloActual, w.f);
+		serial_write_str(&debug, buf, bufLen);
+#endif	//if DEBUG==1
+
+	}
+
+	if (HAL_GetTick() >= _angleTimer) {
+		_angleTimer = HAL_GetTick() + 10;
+
+		Union_u pAz, pEl;
+#if MTR_AZ_ENABLE==1
+		pAz.f = pan.relPosition;
+#else
+		pAz.f = 0.0f;
+#endif	//if MTR_AZ_ENABLE==1
+
+#if MTR_EL_ENABLE==1
+		pEl.f = tilt.relPosition;
+#else
+		pEl.f = 0.0f;
+#endif	//if MTR_EL_ENABLE==1
+
+		for ( int i = 0; i < 4; i++ ) {
+			canSendMotorAngle.data[i] = pAz.b[i];
+			canSendMotorAngle.data[i + 4] = pEl.b[i];
+		}
+
+		busTxHeader->StdId = CAN_ID_RWS_MTR_STAB_ANGLE;
+		memcpy(busTxBuffer, canSendMotorAngle.data, canSendMotorAngle.size);
+		busTxHeader->DLC = canSendMotorAngle.size;
+		if (HAL_CAN_AddTxMessage(&hcan2, busTxHeader, busTxBuffer, busTxMailBox) != HAL_OK)
+			_angleTimer = HAL_GetTick() + 1;
+	}
+
+	if (HAL_GetTick() >= _angularSpeedTimer) {
+		_angularSpeedTimer = HAL_GetTick() + 10;
+
+		Union_u vAz, vEl;
+#if MTR_AZ_ENABLE==1
+		vAz.f = pan.velo;
+#else
+		vAz.f = 0.0f;
+#endif	//if MTR_AZ_ENABLE==1
+
+#if MTR_EL_ENABLE==1
+		vEl.f = tilt.velo;
+#else
+		vEl.f = 0.0f;
+#endif	//if MTR_EL_ENABLE==1
+
+		for ( int i = 0; i < 4; i++ ) {
+			canSendMotorSpeed.data[i] = vAz.b[i];
+			canSendMotorSpeed.data[i + 4] = vEl.b[i];
+		}
+
+		busTxHeader->StdId = CAN_ID_RWS_MTR_STAB_SPD;
+		memcpy(busTxBuffer, canSendMotorSpeed.data, canSendMotorSpeed.size);
+		busTxHeader->DLC = canSendMotorSpeed.size;
+		if (HAL_CAN_AddTxMessage(&hcan2, busTxHeader, busTxBuffer, busTxMailBox) != HAL_OK)
+			_angleTimer = HAL_GetTick() + 1;
 	}
 }
 
@@ -791,102 +936,93 @@ static void busCommandParsing()
 		panelCommand[1] = 0;
 
 #if DEBUG==1
-	bufLen = sprintf(buf, "P:%d %d\tT:%d %d\r\n", pan.enable, (int) panelCommand[0], tilt.enable,
-			(int) panelCommand[1]);
+	bufLen = sprintf(buf, "%sP:%d %d\tT:%d %d", vt100_lineX[7], pan.enable, (int) panelCommand[0],
+			tilt.enable, (int) panelCommand[1]);
 	serial_write_str(&debug, buf, bufLen);
 #endif	//if DEBUG==1
-
 }
 
 static void motorStop(TServoState *motor)
 {
-	/* set position */
-	Ingenia_setTargetPositionAdv(motor->servo, 0, 1, 1, 0);
-
-#if DEBUG==1
-	bufLen = sprintf(buf, "Stop at %dc\r\n", (int) motor->servo->posActual);
-	serial_write_str(&debug, buf, bufLen);
-#endif	//if DEBUG==1
+	Ingenia_setTargetPositionVelocity(motor->servo, 0, 0, 1, 0, 1);
 }
 
 static void motorSpeed(TServoState *motor, int32_t spd)
 {
-	uint32_t _spd = abs(spd);
-	int32_t _pos = motor->servo->posActual;
-
-	/* set speed */
-	if (motor->prevSpeed != _spd)
-		Ingenia_write_sdo_u32(motor->servo, 0x6081, 0, _spd);
+	int _pos = motor->servo->posActual;
+	uint32_t _absSpd = abs(spd);
 
 	if (spd == 0)
 		motorStop(motor);
 	else {
-
-		/* update direction & pos*/
 		if (spd < 0)
 			_pos -= 50000;
 		else
 			_pos += 50000;
 
-		/* set position */
-		Ingenia_setTargetPositionAdv(motor->servo, _pos, 1, 0, 0);
+		Ingenia_setTargetPositionVelocity(motor->servo, _pos, _absSpd, 1, 0, 0);
 	}
 
-	motor->prevSpeed = _spd;
+	motor->prevSpeed = spd;
 }
 
 static void motorHandler()
 {
 	static uint32_t motorUpdateTimer = 0;
+	static uint8_t motorUpdateCounter = 0;
 
 #if MTR_AZ_ENABLE==1
-	static bool panEnable = false;
+	static _Bool panEnable = 1;
 
-	if (pan.enable != panEnable) {
+	if (panEnable != pan.enable) {
 		if (pan.enable) {
 			/* enable motor */
 			Ingenia_enableMotor(pan.servo);
 #if DEBUG==1
-			bufLen = sprintf(buf, "pan enable!\r\n");
+			bufLen = sprintf(buf, "%span enable!", vt100_lineX[12]);
 			serial_write_str(&debug, buf, bufLen);
-#endif	//if DEBUG==1
-
+#endif	//if DEBUG==0
 		}
 		else {
 			/* disable motor */
 			Ingenia_disableMotor(pan.servo);
 #if DEBUG==1
-			bufLen = sprintf(buf, "pan disable!\r\n");
+			bufLen = sprintf(buf, "%span disable!", vt100_lineX[12]);
 			serial_write_str(&debug, buf, bufLen);
-#endif	//if DEBUG==1
+#endif	//if DEBUG==0
 		}
-
 		panEnable = pan.enable;
 	}
 #endif	//if MTR_AZ_ENABLE==1
 
 #if MTR_EL_ENABLE==1
-	static bool tiltEnable = false;
+	static _Bool tiltEnable = 1;
 
-	if (tilt.enable != tiltEnable) {
+	if (tiltEnable != tilt.enable) {
 		if (tilt.enable) {
 			/* enable motor */
 			Ingenia_enableMotor(tilt.servo);
 #if DEBUG==1
-			bufLen = sprintf(buf, "tilt enable!\r\n");
+#if MTR_AZ_ENABLE==1
+			bufLen = sprintf(buf, "\ttilt enable!");
+#else
+			bufLen = sprintf(buf, "%stilt enable!", vt100_lineX[12]);
+#endif	//if MTR_AZ_ENABLE==1
 			serial_write_str(&debug, buf, bufLen);
-#endif	//if DEBUG==1
-
+#endif	//if DEBUG==0
 		}
 		else {
 			/* disable motor */
 			Ingenia_disableMotor(tilt.servo);
 #if DEBUG==1
-			bufLen = sprintf(buf, "tilt disable!\r\n");
+#if MTR_AZ_ENABLE==1
+			bufLen = sprintf(buf, "\ttilt disable!");
+#else
+			bufLen = sprintf(buf, "%stilt disable!", vt100_lineX[12]);
+#endif	//if MTR_AZ_ENABLE==1
 			serial_write_str(&debug, buf, bufLen);
-#endif	//if DEBUG==1
+#endif	//if DEBUG==0
 		}
-
 		tiltEnable = tilt.enable;
 	}
 #endif	//if MTR_EL_ENABLE==1
@@ -895,23 +1031,23 @@ static void motorHandler()
 		motorUpdateTimer = HAL_GetTick() + MOTOR_UPDATE_TIMEOUT;
 
 #if MTR_AZ_ENABLE==1
-		if (panEnable)
+		if (panEnable && !bitRead(motorUpdateCounter, 0))
 			motorSpeed(&pan, panelCommand[0]);
 #endif	//if MTR_AZ_ENABLE==1
 
 #if MTR_EL_ENABLE==1
-		motorSpeed(&tilt, panelCommand[1]);
+		if (tiltEnable && bitRead(motorUpdateCounter, 0))
+			motorSpeed(&tilt, panelCommand[1]);
 #endif	//if MTR_EL_ENABLE==1
 
+		motorUpdateCounter++;
 	}
-
 }
 
 static void motorParamInit(Servo_t *servo)
 {
 
 	Ingenia_write_nmt(servo, NMT_START_REMOTE_NODE);
-	Ingenia_disableMotor(servo);
 
 	/* set mode to profile position */
 	Ingenia_setModeOfOperation(servo, DRIVE_MODE_PROFILE_POSITION);
@@ -957,6 +1093,7 @@ static HAL_StatusTypeDef motorInit()
 #endif	//if DEBUG==1
 
 	motorParamInit(pan.servo);
+	Ingenia_disableMotor(pan.servo);
 
 #if DEBUG==1
 	bufLen = sprintf(buf, "done!\r\n");
@@ -981,6 +1118,7 @@ static HAL_StatusTypeDef motorInit()
 #endif	//if DEBUG==1
 
 	motorParamInit(tilt.servo);
+	Ingenia_disableMotor(tilt.servo);
 
 #if DEBUG==1
 	bufLen = sprintf(buf, "done!\r\n");
@@ -1009,9 +1147,25 @@ static HAL_StatusTypeDef busInit()
 	sFilterConfig.FilterBank = 14;
 	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
 	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-	sFilterConfig.FilterIdHigh = 0;
+	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_PNL_MTR << 5);
 	sFilterConfig.FilterIdLow = 0;
-	sFilterConfig.FilterMaskIdHigh = 0;
+	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_PNL_MTR << 5);
+	sFilterConfig.FilterMaskIdLow = 0;
+	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO1;
+	sFilterConfig.FilterActivation = ENABLE;
+	sFilterConfig.SlaveStartFilterBank = 14;
+
+	if (HAL_CAN_ConfigFilter(&hcan2, &sFilterConfig) != HAL_OK) {
+		/* filter configuration error */
+		return HAL_ERROR;
+	}
+
+	sFilterConfig.FilterBank = 15;
+	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
+	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
+	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_BUTTON << 5);
+	sFilterConfig.FilterIdLow = 0;
+	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_BUTTON << 5);
 	sFilterConfig.FilterMaskIdLow = 0;
 	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO1;
 	sFilterConfig.FilterActivation = ENABLE;
@@ -1081,35 +1235,37 @@ void Ingenia_tpdo_callback(CAN_Buffer_t *buffer)
 
 	if (can_buffer_available(buffer)) {
 		can_buffer_read(buffer, &data);
+#if DEBUG_MTR_POSVELO==1
+		countTPDO4++;
+#endif	//if DEBUG_MTR_POSVELO==1
 
 		if ((data.canRxHeader.StdId & COB_TPDO4) == COB_TPDO4) {
 			idNode = data.canRxHeader.StdId - COB_TPDO4;
-			for ( int i = 0; i < 4; i++ )
-				_velo |= (int) data.rxData[i + 2] << (8 * i);
-
+			for ( int i = 0; i < 4; i++ ) {
+				_pos |= (int) data.rxData[i] << (8 * i);
+				_velo |= (int) data.rxData[i + 4] << (8 * i);
+			}
 #if MTR_AZ_ENABLE==1
-			if (idNode == mtrAzi._u8Node)
-				pan.servo->veloActual = _velo;
-#endif	//if MTR_AZ_ENABLE==1
-
-#if MTR_EL_ENABLE==1
-			if (idNode == mtrEle._u8Node)
-				tilt.servo->veloActual = _velo;
-#endif	//if MTR_EL_ENABLE==1
-
-		}
-		else if ((data.canRxHeader.StdId & COB_TPDO3) == COB_TPDO3) {
-			idNode = data.canRxHeader.StdId - COB_TPDO3;
-			for ( int i = 0; i < 4; i++ )
-				_pos |= (int) data.rxData[i + 2] << (8 * i);
-
-#if MTR_AZ_ENABLE==1
-			if (idNode == mtrAzi._u8Node)
+			if (idNode == mtrAzi._u8Node) {
 				pan.servo->posActual = _pos;
+				pan.servo->veloActual = _velo;
+
+				int32_t _tem = abs(_pos) % C_AZ_FULLSWING;
+				if (_pos < 0)
+					_tem = C_AZ_FULLSWING - _tem;
+				pan.relPosition = C_TO_DEG_AZ(_tem);
+				pan.velo = C_TO_DEG_AZ(_velo);
+			}
 #endif	//if MTR_AZ_ENABLE==1
+
 #if MTR_EL_ENABLE==1
-			if (idNode == mtrEle._u8Node)
+			if (idNode == mtrEle._u8Node) {
 				tilt.servo->posActual = _pos;
+				tilt.servo->veloActual = _velo;
+
+				tilt.relPosition = C_TO_DEG_EL(_pos);
+				tilt.velo = C_TO_DEG_EL(_velo);
+			}
 #endif	//if MTR_EL_ENABLE==1
 
 		}

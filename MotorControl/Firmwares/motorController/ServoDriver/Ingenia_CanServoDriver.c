@@ -314,6 +314,26 @@ void Ingenia_write_nmt(Servo_t *servo, NmtModes_e mode)
 	HAL_CAN_AddTxMessage(Ingenia_hcan, &canTxHeader, canTxBuffer, &canTxMailBox);
 }
 
+void Ingenia_write_rpdo(Servo_t *servo, uint32_t cob_rpdo, uint8_t* data, uint8_t len)
+{
+	uint8_t canTxBuffer[8];
+
+	canTxHeader.StdId = cob_rpdo | servo->_u8Node;
+	canTxHeader.IDE = CAN_ID_STD;
+	canTxHeader.RTR = CAN_RTR_DATA;
+	canTxHeader.DLC = len;
+
+	memcpy(canTxBuffer, data, len);
+
+	/* Start the Transmission process */
+	uint32_t timeout = HAL_GetTick() + 1000;
+	while (HAL_CAN_AddTxMessage(Ingenia_hcan, &canTxHeader, canTxBuffer, &canTxMailBox) != HAL_OK) {
+		if (HAL_GetTick() > timeout)
+			break;
+		HAL_Delay(1);
+	}
+}
+
 uint32_t Ingenia_read_sdo(Servo_t * servo, uint16_t u16Index, uint8_t u8SubIndex, uint8_t *bIsValid)
 {
 	/* read register using SDO */
@@ -906,6 +926,61 @@ void Ingenia_setTargetPositionAdv(Servo_t * servo, int32_t value, uint8_t isImme
 	/* Low New Setpoint */
 	u16ActualControlWord &= ~(MODE_SPECIFIC_BITS_NEW_SETPOINT);
 	Ingenia_write_sdo_u16(servo, OBJECT_CONTROL_WORD, u16ActualControlWord);
+}
+
+typedef union
+{
+	float f;
+	uint32_t u32;
+	int32_t i32;
+	uint8_t b[4];
+} Union_u;
+
+void Ingenia_setTargetPositionVelocity(Servo_t * servo, int32_t pos, uint32_t velo,
+		uint8_t isImmediate, uint8_t isRelative, uint8_t isHaltEnabled)
+{
+	uint16_t u16ActualControlWord = 0xF;
+	uint8_t rpdo_value[8];
+	Union_u p, v;
+
+	/* set pos & velo */
+	memset(rpdo_value, 0, 8);
+	v.u32 = velo;
+	p.i32 = pos;
+	for ( int i = 0; i < 4; i++ ) {
+		rpdo_value[i] = v.b[i];
+		rpdo_value[i + 4] = p.b[i];
+	}
+	Ingenia_write_rpdo(servo, COB_RPDO2, rpdo_value, 8);
+
+	/* set low setpoint */
+	rpdo_value[0] = u16ActualControlWord;
+	rpdo_value[1] = 0;
+	Ingenia_write_rpdo(servo, COB_RPDO1, rpdo_value, 2);
+
+	/* Raise New Setpoint Bit */
+	u16ActualControlWord |= 1 << 4;
+
+	u16ActualControlWord &= ~(MODE_SPECIFIC_BITS_CHANGE_SET);
+	u16ActualControlWord |= (uint16_t) isImmediate << 5;
+
+	u16ActualControlWord &= ~(MODE_SPECIFIC_BITS_ABS_REL);
+	u16ActualControlWord |= (uint16_t) isRelative << 6;
+
+	u16ActualControlWord &= ~(CONTROL_WORD_REGISTER_BITS_HALT);
+	u16ActualControlWord |= (uint16_t) isHaltEnabled << 8;
+
+	rpdo_value[0] = u16ActualControlWord & 0xFF;
+	rpdo_value[1] = (u16ActualControlWord >> 8) & 0xFF;
+
+	Ingenia_write_rpdo(servo, COB_RPDO1, rpdo_value, 2);
+
+	/* Low New Setpoint */
+	u16ActualControlWord &= ~(MODE_SPECIFIC_BITS_NEW_SETPOINT);
+
+	rpdo_value[0] = u16ActualControlWord & 0xFF;
+	rpdo_value[1] = (u16ActualControlWord >> 8) & 0xFF;
+	Ingenia_write_rpdo(servo, COB_RPDO1, rpdo_value, 2);
 }
 
 #define POSITION_ACTUAL_INDEX         0x6064

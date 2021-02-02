@@ -86,12 +86,6 @@ void serial_write_str(TSerial *serial, char *str, uint16_t len)
 		ring_buffer_write(serial->TBufferTx, *str++);
 
 	serial_start_transmitting(serial);
-//	uint32_t cr1its = READ_REG(serial->huart->Instance->CR1);
-//	uint32_t isrflags = READ_REG(serial->huart->Instance->SR);
-//	if (((isrflags & USART_SR_TXE) != RESET) && ((cr1its & USART_CR1_TXEIE) == RESET)) {
-//		/* Enable the UART Transmit data register empty Interrupt */
-//		__HAL_UART_ENABLE_IT(serial->huart, UART_IT_TXE);
-//	}
 }
 
 bool serial_available(TSerial *serial)

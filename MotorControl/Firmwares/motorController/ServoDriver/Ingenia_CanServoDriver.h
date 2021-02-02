@@ -111,6 +111,8 @@ typedef enum
 
 void Ingenia_write_nmt(Servo_t *servo, NmtModes_e mode);
 
+void Ingenia_write_rpdo(Servo_t *servo, uint32_t cob_rpdo, uint8_t* data, uint8_t len);
+
 uint32_t Ingenia_read_sdo(Servo_t *servo, uint16_t u16Index, uint8_t u8SubIndex, uint8_t *bIsValid);
 uint32_t Ingenia_read_reg_sdo(Servo_t *servo, uint16_t u16Index, uint8_t u8SubIndex);
 
@@ -144,6 +146,8 @@ void Ingenia_setTargetTorque(Servo_t * servo, int16_t value);
 void Ingenia_setTargetPosition(Servo_t * servo, int32_t value);
 void Ingenia_setTargetPositionAdv(Servo_t * servo, int32_t value, uint8_t isImmediate,
 		uint8_t isRelative, uint8_t isHaltEnabled);
+void Ingenia_setTargetPositionVelocity(Servo_t * servo, int32_t pos, uint32_t velo,
+		uint8_t isImmediate, uint8_t isRelative, uint8_t isHaltEnabled);
 
 int32_t Ingenia_getActualPosition(Servo_t * servo);
 int32_t Ingenia_getActualVelocity(Servo_t * servo);
