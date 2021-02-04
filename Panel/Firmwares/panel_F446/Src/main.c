@@ -157,6 +157,8 @@ typedef enum
 	MTR_SPD_HIGH = 3
 } MotorSpeed_e;
 
+#define MOTOR_UPDATE_TIMEOUT	5
+
 //#define MTR_SPEED_MAX			116500		//motor max speed=1750rpm
 #define MTR_SPEED_MAX			115000
 #define MTR_PAN_SPEED_MAX		MTR_SPEED_MAX
@@ -772,7 +774,7 @@ static void MX_CAN1_Init(void)
 
 	/* USER CODE END CAN1_Init 1 */
 	hcan1.Instance = CAN1;
-	hcan1.Init.Prescaler = 10;
+	hcan1.Init.Prescaler = 5;
 	hcan1.Init.Mode = CAN_MODE_NORMAL;
 	hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
 	hcan1.Init.TimeSeg1 = CAN_BS1_15TQ;
@@ -2328,7 +2330,7 @@ static void motorHandler()
 #endif	//if MOVEMENT_CHANGE_ENABLE==1
 
 	if (millis >= sendTimer) {
-		sendTimer = millis + 10;
+		sendTimer = millis + MOTOR_UPDATE_TIMEOUT;
 
 		can1TxHeader.StdId = canSendMotorCommand.id;
 		memcpy(can1TxBuffer, canSendMotorCommand.data, canSendMotorCommand.size);
