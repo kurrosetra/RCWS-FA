@@ -96,7 +96,7 @@ void Kontrol_Get(int zoomLevel, Konstanta_PID_t *constPID)
 	else if (zoomLevel > 3)
 		zoomLevel = 3;
 
-	constPID = &kPID[zoomLevel];
+	*constPID = kPID[zoomLevel];
 }
 
 void Kontrol_CalcQDot(int zoomLevel, float qaz, float qev, float qdaz, float qdev, int dx, int dy,

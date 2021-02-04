@@ -30,7 +30,6 @@
 
 #include "stm_hal_serial.h"
 #include "rwsCanID.h"
-#include "pid_controller.h"
 #include "lib_kontrol.h"
 /* USER CODE END Includes */
 
@@ -81,13 +80,16 @@ UART_HandleTypeDef huart6;
 #	define DEBUG_PC					0
 #	define DEBUG_MOVEMENT			0
 #	define DEBUG_GPS				0
+#	define TRACK_LOGGER				1
 #endif	//if DEBUG==1
 #define MOVEMENT_CHANGE_ENABLE		1
-#if MOVEMENT_CHANGE_ENABLE==1
-#	define DEBUG_TRACK				1
-#	define DEBUG_STAB				1
-#	define DEBUG_MEMORY				0
-#endif	//if MOVEMENT_CHANGE_ENABLE==1
+#if DEBUG==1
+#	if MOVEMENT_CHANGE_ENABLE==1
+#		define DEBUG_TRACK				1
+#		define DEBUG_STAB				1
+#		define DEBUG_MEMORY				0
+#	endif	//if MOVEMENT_CHANGE_ENABLE==1
+#endif	//if DEBUG==1
 
 #define bitRead(value, bit) (((value) >> (bit)) & 0x01)
 #define bitSet(value, bit) ((value) |= (1UL << (bit)))
@@ -103,16 +105,18 @@ Ring_Buffer_t tx1Buffer = { { 0 }, 0, 0 };
 Ring_Buffer_t rx1Buffer = { { 0 }, 0, 0 };
 TSerial pc = { &rx1Buffer, &tx1Buffer, &huart1 };
 
-#if DEBUG==1
+#if DEBUG==1 || TRACK_LOGGER==1
 Ring_Buffer_t tx2Buffer = { { 0 }, 0, 0 };
 Ring_Buffer_t rx2Buffer = { { 0 }, 0, 0 };
 TSerial debug = { &rx2Buffer, &tx2Buffer, &huart2 };
 
+#if TRACK_LOGGER==0
 char vt100_home[10];
 #define DEBUG_LINE_MAX		25
 #define DEBUG_LINE_SIZE		16
 char vt100_lineX[DEBUG_LINE_MAX][DEBUG_LINE_SIZE];
-#endif	//if DEBUG==1
+#endif	//if TRACK_LOGGER==0
+#endif	//if DEBUG==1 || TRACK_LOGGER==1
 
 Ring_Buffer_t tx3Buffer = { { 0 }, 0, 0 };
 Ring_Buffer_t rx3Buffer = { { 0 }, 0, 0 };
@@ -231,22 +235,7 @@ typedef enum
 } MovementMode_e;
 uint8_t movementMode = 0;
 
-float yprTravelStab[3];
-PIDControl stabPidAzimuth;
-PIDControl stabPidElevation;
-
-/* PID Constanta */
-const float STAB_K_PID_AZIMUTH[3] = { 5750.0, 22.5, 0.11 };
-const float STAB_K_PID_ELEVATION[3] = { 3000.0, 15.0, 0.035 };
-
 #define TRK_BUFSIZE						128
-#define TRK_IMPLEMENT_AGGRESSIVE_MODE	0
-#if TRK_IMPLEMENT_AGGRESSIVE_MODE==1
-const uint16_t trkXmax = 200;
-const uint16_t trkXmin = 150;
-const uint16_t trkYmax = 120;
-const uint16_t trkYmin = 100;
-#endif	//if TRK_IMPLEMENT_AGGRESSIVE_MODE==1
 
 typedef struct
 {
@@ -485,11 +474,11 @@ int main(void)
 	SystemClock_Config();
 
 	/* USER CODE BEGIN SysInit */
-#if DEBUG==1
+#if DEBUG==1 && TRACK_LOGGER==0
 	sprintf(vt100_home, "\x1b[2J\x1b[H");
 	unsigned char debugLine = 0;
 	for ( debugLine = 0; debugLine < DEBUG_LINE_MAX; debugLine++ )
-		sprintf(vt100_lineX[debugLine], "\x1b[%d;0H\x1b[2K", debugLine);
+	sprintf(vt100_lineX[debugLine], "\x1b[%d;0H\x1b[2K", debugLine);
 #endif	//if DEBUG==1
 
 	/* USER CODE END SysInit */
@@ -512,11 +501,17 @@ int main(void)
 
 	HAL_GPIO_WritePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin, GPIO_PIN_SET);
 
-#if DEBUG
+#if DEBUG==1
 	serial_init(&debug);
 
+#if TRACK_LOGGER==0
 	bufLen = sprintf(buf, "%sPanel Firmware!\r\n", vt100_home);
 	serial_write_str(&debug, buf, bufLen);
+#else
+	bufLen = sprintf(buf, "Track Logger - RWS II!\r\n");
+	serial_write_str(&debug, buf, bufLen);
+#endif	//if TRACK_LOGGER==0
+
 #endif	//if DEBUG
 
 	serial_init(&button);
@@ -533,13 +528,6 @@ int main(void)
 	Kontrol_init();
 	Kontrol_Konstanta_init();
 
-	PIDInit(&stabPidAzimuth, STAB_K_PID_AZIMUTH[0], STAB_K_PID_AZIMUTH[1], STAB_K_PID_AZIMUTH[2],
-			0.1, 0 - (float) MTR_PAN_SPEED[2], (float) MTR_PAN_SPEED[2], MANUAL, DIRECT);
-
-	PIDInit(&stabPidElevation, STAB_K_PID_ELEVATION[0], STAB_K_PID_ELEVATION[1],
-			STAB_K_PID_ELEVATION[2], 0.1, 0 - (float) MTR_TILT_SPEED[2], (float) MTR_TILT_SPEED[2],
-			MANUAL, DIRECT);
-
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -549,6 +537,7 @@ int main(void)
 	uint32_t battTimer = 1000;
 
 	char cmdPID[UART_BUFSIZE];
+	Konstanta_PID_t pid;
 #endif	//if DEBUG==1
 
 	uint32_t _countTimer = 0;
@@ -567,14 +556,17 @@ int main(void)
 		if (millis >= battTimer) {
 			battTimer = millis + 500;
 
+#if TRACK_LOGGER==0
 			bufLen = sprintf(buf, "%sBattVolt= %dmV", vt100_lineX[2], battVoltActual(battVolt));
 			serial_write_str(&debug, buf, bufLen);
+#endif	//if TRACK_LOGGER==0
 			HAL_GPIO_TogglePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin);
 		}
 
 		bool cmdCompleted = false;
 		if (serial_available(&debug)) {
 			char c[2] = { 0, 0 };
+			c[0] = serial_read(&debug);
 			if (c[0] == '$')
 				memset(cmdPID, 0, UART_BUFSIZE);
 			else if (c[0] == '*')
@@ -586,6 +578,12 @@ int main(void)
 		if (cmdCompleted) {
 			char *s;
 			char **tokens;
+
+			/*
+			 * contoh format update pid:
+			 * $PID,[ZOOM_LEVEL],Kp1,Kp2,Kd1,Kd2,Ki1,Ki2,[THRESHOLD]*
+			 * $PID,0,0.0,0.0,0.0,0.0,0.0,0.0,0*
+			 */
 
 			s = strstr(cmdPID, "$PID,");
 			if (s) {
@@ -610,11 +608,21 @@ int main(void)
 					free(tokens);
 				}
 
-				if (zoomLevel >= 0 && zoomLevel <= 3)
+				if (zoomLevel >= 0 && zoomLevel <= 3) {
 					Kontrol_Set(zoomLevel, f, threshold);
+					Kontrol_Get(zoomLevel, &pid);
+					bufLen = sprintf(buf, "\r\nPID[%d]= %.5f %.5f %.5f %.5f %.5f %.5f %d\r\n",
+							zoomLevel, pid.kp1, pid.kp2, pid.kd1, pid.kd2, pid.ki1, pid.ki2,
+							pid.thresholdPX);
+
+					while (ring_buffer_left(debug.TBufferTx) <= bufLen)
+						HAL_Delay(1);
+					serial_write_str(&debug, buf, bufLen);
+				}
 			}
 		}
 
+#if TRACK_LOGGER==0
 		if (HAL_GetTick() >= _countTimer) {
 			_countTimer = HAL_GetTick() + 1000;
 
@@ -631,19 +639,20 @@ int main(void)
 //			serial_write_str(&debug, buf, bufLen);
 
 			char *startingLine = vt100_lineX[15];
-			Konstanta_PID_t pid;
 			for ( int i = 0; i < 4; i++ ) {
 				Kontrol_Get(i, &pid);
 				bufLen = sprintf(buf, "%sPID[%d]= %.5f %.5f %.5f %.5f %.5f %.5f %d", startingLine,
 						i, pid.kp1, pid.kp2, pid.kd1, pid.kd2, pid.ki1, pid.ki2, pid.thresholdPX);
 
 				while (ring_buffer_left(debug.TBufferTx) <= bufLen)
-					HAL_Delay(1);
+				HAL_Delay(1);
 				serial_write_str(&debug, buf, bufLen);
 
 				startingLine += DEBUG_LINE_SIZE;
 			}
 		}
+#endif	//if TRACK_LOGGER==0
+
 #endif	//if DEBUG==1
 
 	}
@@ -1661,7 +1670,7 @@ static void buttonHandler()
 	static uint8_t dataAvailable = 0;
 	static uint32_t updateUnavailableDataTimer = 0;
 
-#if DEBUG_BUTTON==1
+#if DEBUG_BUTTON==1 && TRACK_LOGGER==0
 	const uint8_t startDebugLine = 3;
 #endif	//if DEBUG_BUTTON==1
 
@@ -1682,7 +1691,7 @@ static void buttonHandler()
 		dataAvailable = 1;
 		s = strstr(bufButton, "$BTN,");
 		if (s) {
-#if DEBUG_BUTTON==1
+#if DEBUG_BUTTON==1 && TRACK_LOGGER==0
 			bufLen = sprintf(buf, "%s%s", vt100_lineX[startDebugLine], s);
 			serial_write_str(&debug, buf, bufLen);
 #endif	//if DEBUG_BUTTON==1
@@ -1776,7 +1785,7 @@ static void buttonHandler()
 			if (_f < 0)
 				jLeft.elevation = 0 - jLeft.elevation;
 
-#if DEBUG_BUTTON==1
+#if DEBUG_BUTTON==1 && TRACK_LOGGER==0
 			bufLen = sprintf(buf, "%s0x%04X\t%d:%d:%d\t%d:%d:%d", vt100_lineX[startDebugLine + 1],
 					(int) _btnState, jRight.dtab, jRight.azimuth, jRight.elevation, jLeft.dtab,
 					jLeft.azimuth, jLeft.elevation);
@@ -2242,8 +2251,10 @@ static void pcHandler()
 			s = strstr(trackerData.buf, "$DATA,");
 			if (s) {
 				cmdFound = true;
+#if DEBUG==1 && TRACK_LOGGER==0
 				bufLen = sprintf(buf, "%s%s", vt100_lineX[10], s);
 				serial_write_str(&debug, buf, bufLen);
+#endif	//if DEBUG==1
 				tokens = str_split(trackerData.buf, ',');
 				if (tokens) {
 					for ( int i = 0; *(tokens + i); i++ ) {
@@ -2376,8 +2387,10 @@ static void motorHandler()
 			}
 
 			if (counter++ % 8 == 0) {
+#if DEBUG==1 && TRACK_LOGGER==0
 				bufLen = sprintf(buf, "%sStab: ", vt100_lineX[9]);
 				serial_write_str(&debug, buf, bufLen);
+
 //				for ( int i = 0; i < 4; i++ ) {
 //					bufLen = sprintf(buf, "%02X ", x.b[i]);
 //					serial_write_str(&debug, buf, bufLen);
@@ -2388,6 +2401,7 @@ static void motorHandler()
 //				}
 				bufLen = sprintf(buf, "%d > %.3f %d > %.3f", panValue, x.f, tiltValue, y.f);
 				serial_write_str(&debug, buf, bufLen);
+#endif	//if DEBUG==1
 			}
 		}
 	}
@@ -2473,7 +2487,7 @@ static void stabPidDeInit()
 	canSendStabilized.data[0] = 0;
 	bitClear(movementMode, MOVE_STAB_bit);
 
-#if DEBUG_STAB==1
+#if DEBUG_STAB==1 && TRACK_LOGGER==0
 	bufLen = sprintf(buf, "%stab mode=%d", vt100_lineX[9], stabilizeMode);
 	serial_write_str(&debug, buf, bufLen);
 #endif	//if DEBUG_STAB==1
@@ -2515,7 +2529,7 @@ static void motorStabHandler(uint32_t millis)
 
 		motorUpdateData(0b11, panValue, tiltValue);
 
-#if DEBUG_STAB==1
+#if DEBUG_STAB==1 && TRACK_LOGGER==0
 		static uint32_t _timer = 0;
 		if (millis >= _timer) {
 			_timer = millis + 100;
@@ -2598,9 +2612,23 @@ static void motorTrackingHandler(uint32_t millis)
 				else
 					tiltValue = MTR_TILT_SPEED_MAX;
 			}
+#if TRACK_LOGGER==1
+			/*
+			 * send data logger
+			 * format:
+			 * [time],[zoomlevel],dx,dy,[actual az angle],[actual el angle],[actual az speed],
+			 * [actual el speed],[cmd az speed],[cmd el speed]\r\n
+			 */
+			bufLen = sprintf(buf, "%d,%d,%d,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\r\n", HAL_GetTick(),
+					_u8, trackerData.trkX, trackerData.trkY, motorPosActual[0], motorPosActual[1],
+					motorVeloActual[0], motorVeloActual[1], wMotor[0], wMotor[1]);
+			serial_write_str(&debug, buf, bufLen);
+#endif	//if TRACK_LOGGER==1
+
 		}
 		motorUpdateData(0b11, panValue, tiltValue);
-#if DEBUG_TRACK==1
+
+#if DEBUG_TRACK==1 && TRACK_LOGGER==0
 		bufLen = sprintf(buf, "%smode=%d\tx= %d y=%d", vt100_lineX[9], trackingMode,
 				(int) trackerData.trkX, (int) trackerData.trkY);
 		serial_write_str(&debug, buf, bufLen);
