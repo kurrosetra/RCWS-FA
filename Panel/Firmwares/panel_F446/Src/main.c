@@ -157,10 +157,7 @@ typedef enum
 	MTR_SPD_HIGH = 3
 } MotorSpeed_e;
 
-#define MOTOR_UPDATE_FAST_TIMEOUT		5
-#define MOTOR_UPDATE_NORMAL_TIMEOUT		50
-
-uint32_t MOTOR_UPDATE_TIMEOUT = MOTOR_UPDATE_NORMAL_TIMEOUT;
+#define MOTOR_UPDATE_TIMEOUT	5
 
 //#define MTR_SPEED_MAX			116500		//motor max speed=1750rpm
 #define MTR_SPEED_MAX			115000
@@ -299,7 +296,7 @@ TCanRecvBuffer canRecvMotorAngle = { CAN_ID_RWS_MTR_STAB_ANGLE, false, { 0 }, 8,
 TCanRecvBuffer canRecvMotorSpeed = { CAN_ID_RWS_MTR_STAB_SPD, false, { 0 }, 8, 0 };
 TCanRecvBuffer canRecvOptLrf = { CAN_ID_RWS_OPT_LRF, false, { 0 }, 3, 0 };
 TCanRecvBuffer canRecvOptCam = { CAN_ID_RWS_OPT_CAM, false, { 0 }, 1, 0 };
-TCanRecvBuffer canRecvImuYpr = { CAN_ID_RWS_IMU_YPR, false, { 0 }, 6, 0 };
+TCanRecvBuffer canRecvStabilized = { CAN_ID_RWS_STAB_PNL, false, { 0 }, 8, 0 };
 
 TCanSendBuffer canSendMotorCommand = { CAN_ID_RWS_PNL_MTR, { 0 }, 7 };
 TCanSendBuffer canSendButton = { CAN_ID_RWS_BUTTON, { 0 }, 3 };
@@ -310,7 +307,7 @@ volatile uint32_t cRecvMtrAngle = 0;
 volatile uint32_t cRecvMtrVelo = 0;
 volatile uint32_t cRecvOptLrf = 0;
 volatile uint32_t cRecvOptCam = 0;
-volatile uint32_t cRecvImuYpr = 0;
+volatile uint32_t cRecvStab = 0;
 
 volatile uint32_t cSendMtrCmd = 0;
 volatile uint32_t cSendButtonCmd = 0;
@@ -1162,6 +1159,21 @@ static void CAN_Config()
 
 	/*##-2- Configure the CAN Filter ###########################################*/
 
+//	sFilterConfig.FilterBank = 0;
+//	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
+//	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
+//	sFilterConfig.FilterIdHigh = 0;
+//	sFilterConfig.FilterIdLow = 0;
+//	sFilterConfig.FilterMaskIdHigh = 0;
+//	sFilterConfig.FilterMaskIdLow = 0;
+//	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+//	sFilterConfig.FilterActivation = ENABLE;
+//	sFilterConfig.SlaveStartFilterBank = 14;
+//
+//	if (HAL_CAN_ConfigFilter(&hcan1, &sFilterConfig) != HAL_OK) {
+//		/* filter configuration error */
+//		Error_Handler();
+//	}
 	/* filter can id = CAN_ID_RWS_MOTOR= 0x300 - 0x30F */
 	sFilterConfig.FilterBank = 0;
 	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
@@ -1196,13 +1208,13 @@ static void CAN_Config()
 		Error_Handler();
 	}
 
-	/* filter can id = CAN_ID_RWS_IMU_x= 0x340 - 0x34F */
+	/* filter can id = CAN_ID_RWS_OPT_x= 0x330 - 0x33F */
 	sFilterConfig.FilterBank = 2;
 	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
 	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-	sFilterConfig.FilterIdHigh = (0x340 << 5);
+	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_STAB_PNL << 5);
 	sFilterConfig.FilterIdLow = 0;
-	sFilterConfig.FilterMaskIdHigh = (0x7F0 << 5);
+	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_STAB_PNL << 5);
 	sFilterConfig.FilterMaskIdLow = 0;
 	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
 	sFilterConfig.FilterActivation = ENABLE;
@@ -1311,10 +1323,10 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 			memcpy(canRecvMotorSpeed.data, can1RxBuffer, canRecvMotorSpeed.size);
 			cRecvMtrVelo++;
 		}
-		else if (_id == canRecvImuYpr.id) {
-			canRecvImuYpr.state = true;
-			memcpy(canRecvImuYpr.data, can1RxBuffer, canRecvImuYpr.size);
-			cRecvImuYpr++;
+		else if (_id == canRecvStabilized.id) {
+			canRecvStabilized.state = true;
+			memcpy(canRecvStabilized.data, can1RxBuffer, canRecvStabilized.size);
+			cRecvStab++;
 		}
 	}
 
@@ -1881,6 +1893,17 @@ static void canRecvHandler()
 			if (zoomValueFromOptCam != _u8) {
 				/* adjust crosshair */
 				crossAdjust(0, 0);
+//				/* change k_pid of tracking */
+//				PIDTuningsSet(&trkPidAzimuth, THC_K_PID_AZIMUTH[0], THC_K_PID_AZIMUTH[1],
+//						THC_K_PID_AZIMUTH[2]);
+//				PIDTuningsSet(&trkPidElevation, THC_K_PID_ELEVATION[0], THC_K_PID_ELEVATION[1],
+//						THC_K_PID_ELEVATION[2]);
+
+//				_zoomLevel = 1;
+//				PIDTuningsSet(&trkPidAzimuth, TRK_K_PID_AZIMUTH[_zoomLevel][0],
+//						TRK_K_PID_AZIMUTH[_zoomLevel][1], TRK_K_PID_AZIMUTH[_zoomLevel][2]);
+//				PIDTuningsSet(&trkPidElevation, TRK_K_PID_ELEVATION[_zoomLevel][0],
+//						TRK_K_PID_ELEVATION[_zoomLevel][1], TRK_K_PID_ELEVATION[_zoomLevel][2]);
 			}
 		}
 		/* if CAM==CAM_ST_SONY */
@@ -1888,6 +1911,12 @@ static void canRecvHandler()
 			if (zoomValueFromOptCam != _u8) {
 				/* adjust crosshair */
 				crossAdjust(xCross[_u8], yCross[_u8]);
+
+//				/* change k_pid of tracking */
+//				PIDTuningsSet(&trkPidAzimuth, TRK_K_PID_AZIMUTH[_zoomLevel][0],
+//						TRK_K_PID_AZIMUTH[_zoomLevel][1], TRK_K_PID_AZIMUTH[_zoomLevel][2]);
+//				PIDTuningsSet(&trkPidElevation, TRK_K_PID_ELEVATION[_zoomLevel][0],
+//						TRK_K_PID_ELEVATION[_zoomLevel][1], TRK_K_PID_ELEVATION[_zoomLevel][2]);
 			}
 		}
 		zoomValueFromOptCam = _u8;
@@ -1983,8 +2012,6 @@ static void canRecvHandler()
 #endif	//if DEBUG_BUS==1
 
 	}
-
-	/* receive data from IMU (YPR) */
 
 }
 
@@ -2290,26 +2317,14 @@ static void motorHandler()
 	tiltMoveMax = MTR_TILT_SPEED[_u8];
 
 #if MOVEMENT_CHANGE_ENABLE==1
-	if (bitRead(movementMode, MOVE_MEMORY_bit)) {
+	if (bitRead(movementMode, MOVE_MEMORY_bit))
 		motorMemoryHandler(millis);
-		MOTOR_UPDATE_TIMEOUT = MOTOR_UPDATE_NORMAL_TIMEOUT;
-		bitClear(canSendMotorCommand.data[0], 6);
-	}
-	else if (bitRead(movementMode, MOVE_TRACK_bit)) {
+	else if (bitRead(movementMode, MOVE_TRACK_bit))
 		motorTrackingHandler(millis);
-		MOTOR_UPDATE_TIMEOUT = MOTOR_UPDATE_FAST_TIMEOUT;
-		bitSet(canSendMotorCommand.data[0], 6);
-	}
-	else if (bitRead(movementMode, MOVE_STAB_bit)) {
+	else if (bitRead(movementMode, MOVE_STAB_bit))
 		motorStabHandler(millis);
-		MOTOR_UPDATE_TIMEOUT = MOTOR_UPDATE_NORMAL_TIMEOUT;
-		bitSet(canSendMotorCommand.data[0], 6);
-	}
-	else {
+	else
 		motorJoystickHandler(millis);
-		MOTOR_UPDATE_TIMEOUT = MOTOR_UPDATE_NORMAL_TIMEOUT;
-		bitClear(canSendMotorCommand.data[0], 6);
-	}
 #else
 	motorJoystickHandler(millis);
 #endif	//if MOVEMENT_CHANGE_ENABLE==1
@@ -2338,6 +2353,62 @@ static void motorHandler()
 		else
 			stabModuleTimer = millis + 1;
 	}
+
+#if DEBUG_STAB==1
+	Union_u x, y;
+	int32_t panValue, tiltValue;
+	static uint8_t counter = 0;
+	uint8_t dataXY[8];
+
+	if (stabilizeMode == MOVEMENT_MODE_OFF && trackingMode == MOVEMENT_MODE_OFF) {
+		if (canRecvStabilized.state) {
+			canRecvStabilized.state = false;
+
+			memcpy(dataXY, canRecvStabilized.data, 8);
+
+			/* find angular velocity request from stabilize module */
+			for ( int i = 0; i < 4; i++ ) {
+				x.b[i] = dataXY[i];
+				y.b[i] = dataXY[i + 4];
+			}
+
+			/* convert from deg/s to c/s */
+			panValue = (int32_t) DEG_TO_C_AZ(x.f);
+			if (abs(panValue) > MTR_SPEED_MAX) {
+				if (panValue >= 0)
+					panValue = MTR_SPEED_MAX;
+				else
+					panValue = 0 - MTR_SPEED_MAX;
+			}
+			tiltValue = (int32_t) DEG_TO_C_EL(y.f);
+			if (abs(tiltValue) > MTR_SPEED_MAX) {
+				if (tiltValue >= 0)
+					tiltValue = MTR_SPEED_MAX;
+				else
+					tiltValue = 0 - MTR_SPEED_MAX;
+			}
+
+			if (counter++ % 8 == 0) {
+#if DEBUG==1 && TRACK_LOGGER==0
+				bufLen = sprintf(buf, "%sStab: ", vt100_lineX[9]);
+				serial_write_str(&debug, buf, bufLen);
+
+//				for ( int i = 0; i < 4; i++ ) {
+//					bufLen = sprintf(buf, "%02X ", x.b[i]);
+//					serial_write_str(&debug, buf, bufLen);
+//				}
+//				for ( int i = 0; i < 4; i++ ) {
+//					bufLen = sprintf(buf, "%02X ", y.b[i]);
+//					serial_write_str(&debug, buf, bufLen);
+//				}
+				bufLen = sprintf(buf, "%d > %.3f %d > %.3f", panValue, x.f, tiltValue, y.f);
+				serial_write_str(&debug, buf, bufLen);
+#endif	//if DEBUG==1
+			}
+		}
+	}
+#endif	//if DEBUG_STAB==1
+
 }
 
 static int32_t motorJoystickConvert(int input, long _spdMax)
@@ -2365,7 +2436,7 @@ static void motorJoystickHandler(uint32_t millis)
 	int32_t _tilt = 0;
 
 	if (millis >= updateTimer) {
-		updateTimer = millis + MOTOR_UPDATE_NORMAL_TIMEOUT;
+		updateTimer = millis + 100;
 
 		if (bitRead(jRight.dtab, 0)) {
 			_enable = 0b11;
@@ -2410,7 +2481,6 @@ static void stabPidInit()
 	panMoveMax = MTR_PAN_SPEED[2];
 	tiltMoveMax = MTR_TILT_SPEED[2];
 	canSendStabilized.data[0] = 1;
-	motorUpdateData(0b11, 0, 0);
 }
 
 static void stabPidDeInit()
@@ -2428,61 +2498,61 @@ static void stabPidDeInit()
 
 static void motorStabHandler(uint32_t millis)
 {
-	motorUpdateData(0b11, 0, 0);
-//	Union_u x, y;
-//	int32_t panValue = 0, tiltValue = 0;
-//	uint8_t dataXY[8];
-//
-//	if (canRecvImu.state) {
-//		canRecvImu.state = false;
-//
-//		memcpy(dataXY, canRecvImu.data, 8);
-//
-//		/* find angular velocity request from stabilize module */
+	Union_u x, y;
+	int32_t panValue = 0, tiltValue = 0;
+	uint8_t dataXY[8];
+
+	if (canRecvStabilized.state) {
+		canRecvStabilized.state = false;
+
+		memcpy(dataXY, canRecvStabilized.data, 8);
+
+		/* find angular velocity request from stabilize module */
+		for ( int i = 0; i < 4; i++ ) {
+			x.b[i] = dataXY[i];
+			y.b[i] = dataXY[i + 4];
+		}
+
+		/* convert from deg/s to c/s */
+		panValue = (int32_t) DEG_TO_C_AZ(x.f);
+		if (abs(panValue) > MTR_SPEED_MAX) {
+			if (panValue >= 0)
+				panValue = MTR_SPEED_MAX;
+			else
+				panValue = 0 - MTR_SPEED_MAX;
+		}
+		tiltValue = (int32_t) DEG_TO_C_EL(y.f);
+		if (abs(tiltValue) > MTR_SPEED_MAX) {
+			if (tiltValue >= 0)
+				tiltValue = MTR_SPEED_MAX;
+			else
+				tiltValue = 0 - MTR_SPEED_MAX;
+		}
+
+		motorUpdateData(0b11, panValue, tiltValue);
+
+#if DEBUG_STAB==1 && TRACK_LOGGER==0
+		static uint32_t _timer = 0;
+		if (millis >= _timer) {
+			_timer = millis + 100;
+
+			bufLen = sprintf(buf, "%stab mode=%d\tpan= %.3f > %d tilt= %.3f > %d\r\n",
+					vt100_lineX[9], stabilizeMode, x.f, (int) panValue, y.f, (int) tiltValue);
+			serial_write_str(&debug, buf, bufLen);
 //		for ( int i = 0; i < 4; i++ ) {
-//			x.b[i] = dataXY[i];
-//			y.b[i] = dataXY[i + 4];
-//		}
-//
-//		/* convert from deg/s to c/s */
-//		panValue = (int32_t) DEG_TO_C_AZ(x.f);
-//		if (abs(panValue) > MTR_SPEED_MAX) {
-//			if (panValue >= 0)
-//				panValue = MTR_SPEED_MAX;
-//			else
-//				panValue = 0 - MTR_SPEED_MAX;
-//		}
-//		tiltValue = (int32_t) DEG_TO_C_EL(y.f);
-//		if (abs(tiltValue) > MTR_SPEED_MAX) {
-//			if (tiltValue >= 0)
-//				tiltValue = MTR_SPEED_MAX;
-//			else
-//				tiltValue = 0 - MTR_SPEED_MAX;
-//		}
-//
-//		motorUpdateData(0b11, panValue, tiltValue);
-//
-//#if DEBUG_STAB==1 && TRACK_LOGGER==0
-//		static uint32_t _timer = 0;
-//		if (millis >= _timer) {
-//			_timer = millis + 100;
-//
-//			bufLen = sprintf(buf, "%stab mode=%d\tpan= %.3f > %d tilt= %.3f > %d\r\n",
-//					vt100_lineX[9], stabilizeMode, x.f, (int) panValue, y.f, (int) tiltValue);
+//			bufLen = sprintf(buf, "%02X ", x.b[i]);
 //			serial_write_str(&debug, buf, bufLen);
-////		for ( int i = 0; i < 4; i++ ) {
-////			bufLen = sprintf(buf, "%02X ", x.b[i]);
-////			serial_write_str(&debug, buf, bufLen);
-////		}
-////		for ( int i = 0; i < 4; i++ ) {
-////			bufLen = sprintf(buf, "%02X ", y.b[i]);
-////			serial_write_str(&debug, buf, bufLen);
-////		}
-//
 //		}
-//#endif	//if DEBUG_STAB==1
-//
-//	}
+//		for ( int i = 0; i < 4; i++ ) {
+//			bufLen = sprintf(buf, "%02X ", y.b[i]);
+//			serial_write_str(&debug, buf, bufLen);
+//		}
+
+		}
+#endif	//if DEBUG_STAB==1
+
+	}
+
 }
 
 static void motorStabStarting(uint32_t millis)
@@ -2512,7 +2582,7 @@ static void motorTrackingHandler(uint32_t millis)
 	uint8_t _u8 = 0;
 
 	if (millis >= updateMotorTimer) {
-		updateMotorTimer = millis + MOTOR_UPDATE_FAST_TIMEOUT;
+		updateMotorTimer = millis + 100;
 
 		if (!bitRead(canRecvOptCam.data[0], 0)) {
 			_u8 = zoomValueFromOptCam;
@@ -2581,7 +2651,6 @@ static void motorTrackingStarting(uint32_t millis)
 static void motorMemoryHandler(uint32_t millis)
 {
 	bitClear(movementMode, MOVE_MEMORY_bit);
-	motorUpdateData(0, 0, 0);
 }
 
 static void motorMemoryStarting(uint32_t millis)

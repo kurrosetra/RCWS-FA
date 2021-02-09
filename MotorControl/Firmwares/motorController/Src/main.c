@@ -56,7 +56,7 @@ typedef union
 #define DEBUG					1
 
 #if DEBUG==1
-#	define DEBUG_MTR_POSVELO	0
+#	define DEBUG_MTR_POSVELO	1
 #	define DEBUG_INGENIA_DRIVER	0
 #	if DEBUG_INGENIA_DRIVER==1
 #		define MTR_ID			0x20
@@ -89,8 +89,7 @@ typedef union
 #define MOTOR_MAX_SPEED			116500UL	//1750RPM
 #define MOTOR_MAX_ACCEL			2500000UL
 
-#define DATA_UPDATE_FAST_TIMEOUT		5
-#define DATA_UPDATE_NORMAL_TIMEOUT		50
+#define MOTOR_UPDATE_TIMEOUT	5
 
 /* USER CODE END PD */
 
@@ -208,8 +207,6 @@ typedef struct
 
 TCanRecvBuffer canRecvPanel = { CAN_ID_RWS_PNL_MTR, false, { 0 }, 7, 0 };
 TCanRecvBuffer canRecvButton = { CAN_ID_RWS_BUTTON, false, { 0 }, 3, 0 };
-TCanRecvBuffer canRecvImu = { CAN_ID_RWS_IMU, false, { 0 }, 8, 0 };
-TCanRecvBuffer canrecvStabMode = { CAN_ID_RWS_PNL_STAB_MODE, false, { 0 }, 1, 0 };
 
 TCanSendBuffer canSendMotor = { CAN_ID_RWS_MOTOR, { 0 }, 2 };
 TCanSendBuffer canSendMotorAngle = { CAN_ID_RWS_MTR_STAB_ANGLE, { 0 }, 8 };
@@ -219,9 +216,6 @@ TCanSendBuffer canSendMotorSpeed = { CAN_ID_RWS_MTR_STAB_SPD, { 0 }, 8 };
 volatile uint32_t countTPDO4 = 0;
 #endif	//if DEBUG_MTR_POSVELO==1
 
-uint32_t DATA_UPDATE_TIMEOUT = DATA_UPDATE_NORMAL_TIMEOUT;
-bool stabMode = false;
-int32_t stabCommand[2];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -247,10 +241,6 @@ static void busCommandParsing();
 static HAL_StatusTypeDef busInit();
 static void busHandler(CAN_HandleTypeDef *bus);
 static void busSendingHandler();
-
-static void stabInit();
-static void stabHandler();
-static void stabUpdate();
 
 /* USER CODE END PFP */
 
@@ -808,10 +798,6 @@ static void busSendingHandler()
 
 		bitWrite(canSendMotor.data[0], 0, pan.enable);
 		bitWrite(canSendMotor.data[0], 1, tilt.enable);
-		if (DATA_UPDATE_TIMEOUT == DATA_UPDATE_FAST_TIMEOUT)
-			bitSet(canSendMotor.data[0], 6);
-		else
-			bitClear(canSendMotor.data[0], 6);
 		bitWrite(canSendMotor.data[1], 0,
 				HAL_GPIO_ReadPin(TRIGGER_ENABLE_GPIO_Port, TRIGGER_ENABLE_Pin));
 		bitWrite(canSendMotor.data[1], 1, cockStart);
@@ -820,7 +806,7 @@ static void busSendingHandler()
 		memcpy(busTxBuffer, canSendMotor.data, canSendMotor.size);
 		busTxHeader->DLC = canSendMotor.size;
 		if (HAL_CAN_AddTxMessage(&hcan2, busTxHeader, busTxBuffer, busTxMailBox) != HAL_OK)
-			_stateTimer = HAL_GetTick() + 1;
+			_stateTimer = HAL_GetTick() + 10;
 
 #if DEBUG==1
 		Union_u u, w;
@@ -841,7 +827,7 @@ static void busSendingHandler()
 	}
 
 	if (HAL_GetTick() >= _angleTimer) {
-		_angleTimer = HAL_GetTick() + DATA_UPDATE_TIMEOUT;
+		_angleTimer = HAL_GetTick() + 10;
 
 		Union_u pAz, pEl;
 #if MTR_AZ_ENABLE==1
@@ -869,7 +855,7 @@ static void busSendingHandler()
 	}
 
 	if (HAL_GetTick() >= _angularSpeedTimer) {
-		_angularSpeedTimer = HAL_GetTick() + DATA_UPDATE_TIMEOUT;
+		_angularSpeedTimer = HAL_GetTick() + 10;
 
 		Union_u vAz, vEl;
 #if MTR_AZ_ENABLE==1
@@ -986,21 +972,6 @@ static void motorHandler()
 	static uint8_t motorUpdateCounter = 0;
 
 #if MTR_AZ_ENABLE==1
-	int32_t *panCommand;
-	if (!stabMode)
-		panCommand = &panelCommand[0];
-	else
-		panCommand = &stabCommand[0];
-#endif	//if MTR_AZ_ENABLE==1
-#if MTR_EL_ENABLE==1
-	int32_t *tiltCommand;
-	if (!stabMode)
-		tiltCommand = &panelCommand[1];
-	else
-		tiltCommand = &stabCommand[1];
-#endif	//if MTR_EL_ENABLE==1
-
-#if MTR_AZ_ENABLE==1
 	static _Bool panEnable = 1;
 
 	if (panEnable != pan.enable) {
@@ -1056,41 +1027,17 @@ static void motorHandler()
 	}
 #endif	//if MTR_EL_ENABLE==1
 
-//	if (HAL_GetTick() >= motorUpdateTimer) {
-//		motorUpdateTimer = HAL_GetTick() + DATA_UPDATE_TIMEOUT;
-//
-//#if MTR_AZ_ENABLE==1
-//		if (panEnable && !bitRead(motorUpdateCounter, 0))
-//			motorSpeed(&pan, panelCommand[0]);
-//#endif	//if MTR_AZ_ENABLE==1
-//
-//#if MTR_EL_ENABLE==1
-//		if (tiltEnable && bitRead(motorUpdateCounter, 0))
-//			motorSpeed(&tilt, panelCommand[1]);
-//#endif	//if MTR_EL_ENABLE==1
-//
-//		motorUpdateCounter++;
-//	}
-
 	if (HAL_GetTick() >= motorUpdateTimer) {
+		motorUpdateTimer = HAL_GetTick() + MOTOR_UPDATE_TIMEOUT;
+
 #if MTR_AZ_ENABLE==1
-#if MTR_EL_ENABLE==1
-		motorUpdateTimer = HAL_GetTick() + 1;
-#else
-		motorUpdateTimer=HAL_GetTick()+DATA_UPDATE_TIMEOUT;
-#endif	//if MTR_EL_ENABLE==1
-		if (panEnable)
-			motorSpeed(&pan, *panCommand);
+		if (panEnable && !bitRead(motorUpdateCounter, 0))
+			motorSpeed(&pan, panelCommand[0]);
 #endif	//if MTR_AZ_ENABLE==1
 
 #if MTR_EL_ENABLE==1
-#if MTR_AZ_ENABLE==1
-		motorUpdateTimer = HAL_GetTick() + DATA_UPDATE_TIMEOUT - 1;
-#else
-		motorUpdateTimer=HAL_GetTick()+DATA_UPDATE_TIMEOUT;
-#endif	//if MTR_AZ_ENABLE==1
-		if (tiltEnable)
-			motorSpeed(&tilt, *tiltCommand);
+		if (tiltEnable && bitRead(motorUpdateCounter, 0))
+			motorSpeed(&tilt, panelCommand[1]);
 #endif	//if MTR_EL_ENABLE==1
 
 		motorUpdateCounter++;
@@ -1197,8 +1144,6 @@ static HAL_StatusTypeDef busInit()
 	CAN_FilterTypeDef sFilterConfig;
 
 	/*##-2- Configure the CAN Filter ###########################################*/
-
-	/* filter can id = CAN_ID_RWS_PNL_MTR */
 	sFilterConfig.FilterBank = 14;
 	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
 	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
@@ -1215,47 +1160,12 @@ static HAL_StatusTypeDef busInit()
 		return HAL_ERROR;
 	}
 
-	/* filter can id = CAN_ID_RWS_BUTTON */
 	sFilterConfig.FilterBank = 15;
 	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
 	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
 	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_BUTTON << 5);
 	sFilterConfig.FilterIdLow = 0;
 	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_BUTTON << 5);
-	sFilterConfig.FilterMaskIdLow = 0;
-	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO1;
-	sFilterConfig.FilterActivation = ENABLE;
-	sFilterConfig.SlaveStartFilterBank = 14;
-
-	if (HAL_CAN_ConfigFilter(&hcan2, &sFilterConfig) != HAL_OK) {
-		/* filter configuration error */
-		return HAL_ERROR;
-	}
-
-	/* filter can id = CAN_ID_RWS_IMU */
-	sFilterConfig.FilterBank = 16;
-	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
-	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_IMU << 5);
-	sFilterConfig.FilterIdLow = 0;
-	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_IMU << 5);
-	sFilterConfig.FilterMaskIdLow = 0;
-	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO1;
-	sFilterConfig.FilterActivation = ENABLE;
-	sFilterConfig.SlaveStartFilterBank = 14;
-
-	if (HAL_CAN_ConfigFilter(&hcan2, &sFilterConfig) != HAL_OK) {
-		/* filter configuration error */
-		return HAL_ERROR;
-	}
-
-	/* filter can id = CAN_ID_RWS_PNL_STAB_MODE */
-	sFilterConfig.FilterBank = 17;
-	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
-	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_PNL_STAB_MODE << 5);
-	sFilterConfig.FilterIdLow = 0;
-	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_PNL_STAB_MODE << 5);
 	sFilterConfig.FilterMaskIdLow = 0;
 	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO1;
 	sFilterConfig.FilterActivation = ENABLE;
@@ -1294,59 +1204,15 @@ static void busHandler(CAN_HandleTypeDef *bus)
 
 	if (HAL_CAN_GetRxMessage(bus, CAN_RX_FIFO1, busRxHeader, busRxBuffer) == HAL_OK) {
 		_id = busRxHeader->StdId;
-		if (_id == canRecvPanel.id) {
+		if (_id == CAN_ID_RWS_PNL_MTR) {
 			canRecvPanel.state = true;
 			memcpy(canRecvPanel.data, busRxBuffer, canRecvPanel.size);
 		}
-		else if (_id == canRecvButton.id) {
+		else if (_id == CAN_ID_RWS_BUTTON) {
 			canRecvButton.state = true;
 			memcpy(canRecvButton.data, busRxBuffer, canRecvButton.size);
 		}
-		else if (_id == canRecvImu.id) {
-			canRecvImu.state = true;
-			memcpy(canRecvImu.data, busRxBuffer, canRecvImu.size);
-		}
-		else if (_id == canrecvStabMode.id) {
-			canrecvStabMode.state = true;
-			memcpy(canrecvStabMode.data, busRxBuffer, canrecvStabMode.size);
-		}
 	}
-
-	if (bitRead(canRecvPanel.data[0], 6))
-		DATA_UPDATE_TIMEOUT = DATA_UPDATE_FAST_TIMEOUT;
-	else
-		DATA_UPDATE_TIMEOUT = DATA_UPDATE_NORMAL_TIMEOUT;
-}
-
-/* TODO Stabilize Control*/
-static void stabInit()
-{
-	stabCommand[0] = stabCommand[1] = 0;
-
-}
-
-static void stabHandler()
-{
-	static uint32_t _timer = 0;
-
-	if (!stabMode) {
-		if (bitRead(canrecvStabMode.data[0], 0)) {
-			stabInit();
-			stabMode = true;
-		}
-	}
-	else {
-		if (!bitRead(canrecvStabMode.data[0], 0))
-			stabMode = false;
-
-
-	}
-
-}
-
-static void stabUpdate()
-{
-
 }
 
 /**
