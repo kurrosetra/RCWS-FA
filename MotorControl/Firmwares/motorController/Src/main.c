@@ -211,7 +211,7 @@ typedef struct
 
 TCanRecvBuffer canRecvPanel = { CAN_ID_RWS_PNL_MTR, false, { 0 }, 7, 0 };
 TCanRecvBuffer canRecvButton = { CAN_ID_RWS_BUTTON, false, { 0 }, 3, 0 };
-TCanRecvBuffer canRecvStabMode = { CAN_ID_RWS_PNL_STAB_MODE, false, { 0 }, 1, 0 };
+TCanRecvBuffer canRecvStabMode = { CAN_ID_RWS_PNL_STAB_MODE, false, { 0 }, 6, 0 };
 TCanRecvBuffer canRecvStabCommand = { CAN_ID_RWS_STAB_PNL, false, { 0 }, 8, 0 };
 
 TCanSendBuffer canSendMotor = { CAN_ID_RWS_MOTOR, { 0 }, 6 };
@@ -372,7 +372,7 @@ int main(void)
 			cockStart = bitRead(canRecvButton.data[0], 1);
 		}
 
-		if (bitRead(canRecvStabMode.data[0], 0)) {
+		if (canRecvStabMode.data[0] != 0) {
 			if (HAL_GetTick() >= stabCommandTimeout && canRecvStabCommand.online) {
 				canRecvStabCommand.online = false;
 				pan.enable = false;
@@ -383,7 +383,7 @@ int main(void)
 
 		if (HAL_GetTick() >= motorCommandTimeout && canRecvPanel.online) {
 			canRecvPanel.online = false;
-			if (!bitRead(canRecvStabMode.data[0], 0)) {
+			if (canRecvStabMode.data[0] == 0) {
 				pan.enable = false;
 				tilt.enable = false;
 			}
@@ -399,7 +399,7 @@ int main(void)
 			HAL_GPIO_TogglePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin);
 		}
 
-		if (bitRead(canRecvStabMode.data[0], 0)) {
+		if (canRecvStabMode.data[0] != 0) {
 			if (canRecvStabCommand.state) {
 				canRecvStabCommand.state = false;
 				stabCommandTimeout = HAL_GetTick() + COMMAND_RECEIVE_TIMEOUT;
@@ -1017,8 +1017,8 @@ static void busCommandParsing()
 
 #if DEBUG==1
 	bufLen = sprintf(buf, "%sStab:%d\tP:%d %d %d\tT:%d %d %d", vt100_lineX[7],
-			bitRead(canRecvStabMode.data[0], 0), pan.enable, (int) panelCommand[0],
-			(int) stabCommand[0], tilt.enable, (int) panelCommand[1], (int) stabCommand[1]);
+			canRecvStabMode.data[0], pan.enable, (int) panelCommand[0], (int) stabCommand[0],
+			tilt.enable, (int) panelCommand[1], (int) stabCommand[1]);
 	serial_write_str(&debug, buf, bufLen);
 #endif	//if DEBUG==1
 
@@ -1055,7 +1055,7 @@ static void motorHandler()
 	int32_t *panCommand;
 	int32_t *tiltCommand;
 
-	if (bitRead(canRecvStabMode.data[0], 0)) {
+	if (canRecvStabMode.data[0] != 0) {
 		panCommand = &stabCommand[0];
 		tiltCommand = &stabCommand[1];
 	}
