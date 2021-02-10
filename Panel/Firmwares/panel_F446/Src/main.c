@@ -80,7 +80,7 @@ UART_HandleTypeDef huart6;
 #	define DEBUG_PC					0
 #	define DEBUG_MOVEMENT			0
 #	define DEBUG_GPS				0
-#	define TRACK_LOGGER				1
+#	define TRACK_LOGGER				0
 #endif	//if DEBUG==1
 #define MOVEMENT_CHANGE_ENABLE		1
 #if DEBUG==1
@@ -157,7 +157,7 @@ typedef enum
 	MTR_SPD_HIGH = 3
 } MotorSpeed_e;
 
-#define MOTOR_UPDATE_TIMEOUT	5
+#define MOTOR_UPDATE_TIMEOUT	10
 
 //#define MTR_SPEED_MAX			116500		//motor max speed=1750rpm
 #define MTR_SPEED_MAX			115000
@@ -291,16 +291,15 @@ typedef struct
 	uint8_t size;
 } TCanSendBuffer;
 
-TCanRecvBuffer canRecvMotorState = { CAN_ID_RWS_MOTOR, false, { 0 }, 2, 0 };
+TCanRecvBuffer canRecvMotorState = { CAN_ID_RWS_MOTOR, false, { 0 }, 6, 0 };
 TCanRecvBuffer canRecvMotorAngle = { CAN_ID_RWS_MTR_STAB_ANGLE, false, { 0 }, 8, 0 };
 TCanRecvBuffer canRecvMotorSpeed = { CAN_ID_RWS_MTR_STAB_SPD, false, { 0 }, 8, 0 };
 TCanRecvBuffer canRecvOptLrf = { CAN_ID_RWS_OPT_LRF, false, { 0 }, 3, 0 };
 TCanRecvBuffer canRecvOptCam = { CAN_ID_RWS_OPT_CAM, false, { 0 }, 1, 0 };
-TCanRecvBuffer canRecvStabilized = { CAN_ID_RWS_STAB_PNL, false, { 0 }, 8, 0 };
 
 TCanSendBuffer canSendMotorCommand = { CAN_ID_RWS_PNL_MTR, { 0 }, 7 };
 TCanSendBuffer canSendButton = { CAN_ID_RWS_BUTTON, { 0 }, 3 };
-TCanSendBuffer canSendStabilized = { CAN_ID_RWS_PNL_STAB_MODE, { 0 }, 1 };
+TCanSendBuffer canSendStabMode = { CAN_ID_RWS_PNL_STAB_MODE, { 0 }, 1 };
 
 volatile uint32_t cRecvMtrState = 0;
 volatile uint32_t cRecvMtrAngle = 0;
@@ -308,6 +307,7 @@ volatile uint32_t cRecvMtrVelo = 0;
 volatile uint32_t cRecvOptLrf = 0;
 volatile uint32_t cRecvOptCam = 0;
 volatile uint32_t cRecvStab = 0;
+volatile uint16_t cAngleVelo[2] = { 0, 0 };
 
 volatile uint32_t cSendMtrCmd = 0;
 volatile uint32_t cSendButtonCmd = 0;
@@ -480,7 +480,7 @@ int main(void)
 	sprintf(vt100_home, "\x1b[2J\x1b[H");
 	unsigned char debugLine = 0;
 	for ( debugLine = 0; debugLine < DEBUG_LINE_MAX; debugLine++ )
-	sprintf(vt100_lineX[debugLine], "\x1b[%d;0H\x1b[2K", debugLine);
+		sprintf(vt100_lineX[debugLine], "\x1b[%d;0H\x1b[2K", debugLine);
 #endif	//if DEBUG==1
 
 	/* USER CODE END SysInit */
@@ -628,17 +628,17 @@ int main(void)
 		if (HAL_GetTick() >= _countTimer) {
 			_countTimer = HAL_GetTick() + 1000;
 
-//			bufLen = sprintf(buf, "%sRecv packets:\t(MS)%d (MA)%d (MV)%d (OC)%d (OL)%d (S)%d",
-//					vt100_lineX[11], cRecvMtrState, cRecvMtrAngle, cRecvMtrVelo, cRecvOptCam,
-//					cRecvOptLrf, cRecvStab);
-//			cRecvMtrState = cRecvMtrAngle = cRecvMtrVelo = cRecvOptCam = cRecvOptLrf = cRecvStab =
-//					0;
-//			serial_write_str(&debug, buf, bufLen);
-//
-//			bufLen = sprintf(buf, "%sSend packets:\t(MC)%d (BC)%d (SC)%d", vt100_lineX[12],
-//					cSendMtrCmd, cSendButtonCmd, cSendStabCmd);
-//			cSendMtrCmd = cSendButtonCmd = cSendStabCmd = 0;
-//			serial_write_str(&debug, buf, bufLen);
+			bufLen = sprintf(buf, "%sRecv packets:\t(MS)%d (MA)%d (MV)%d (OC)%d (OL)%d (S)%d %d-%d",
+					vt100_lineX[11], cRecvMtrState, cRecvMtrAngle, cRecvMtrVelo, cRecvOptCam,
+					cRecvOptLrf, cRecvStab, cAngleVelo[0], cAngleVelo[1]);
+			cRecvMtrState = cRecvMtrAngle = cRecvMtrVelo = cRecvOptCam = cRecvOptLrf = cRecvStab =
+					0;
+			serial_write_str(&debug, buf, bufLen);
+
+			bufLen = sprintf(buf, "%sSend packets:\t(MC)%d (BC)%d (SC)%d", vt100_lineX[12],
+					cSendMtrCmd, cSendButtonCmd, cSendStabCmd);
+			cSendMtrCmd = cSendButtonCmd = cSendStabCmd = 0;
+			serial_write_str(&debug, buf, bufLen);
 
 			char *startingLine = vt100_lineX[15];
 			for ( int i = 0; i < 4; i++ ) {
@@ -647,7 +647,7 @@ int main(void)
 						i, pid.kp1, pid.kp2, pid.kd1, pid.kd2, pid.ki1, pid.ki2, pid.thresholdPX);
 
 				while (ring_buffer_left(debug.TBufferTx) <= bufLen)
-				HAL_Delay(1);
+					HAL_Delay(1);
 				serial_write_str(&debug, buf, bufLen);
 
 				startingLine += DEBUG_LINE_SIZE;
@@ -1159,21 +1159,6 @@ static void CAN_Config()
 
 	/*##-2- Configure the CAN Filter ###########################################*/
 
-//	sFilterConfig.FilterBank = 0;
-//	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
-//	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-//	sFilterConfig.FilterIdHigh = 0;
-//	sFilterConfig.FilterIdLow = 0;
-//	sFilterConfig.FilterMaskIdHigh = 0;
-//	sFilterConfig.FilterMaskIdLow = 0;
-//	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
-//	sFilterConfig.FilterActivation = ENABLE;
-//	sFilterConfig.SlaveStartFilterBank = 14;
-//
-//	if (HAL_CAN_ConfigFilter(&hcan1, &sFilterConfig) != HAL_OK) {
-//		/* filter configuration error */
-//		Error_Handler();
-//	}
 	/* filter can id = CAN_ID_RWS_MOTOR= 0x300 - 0x30F */
 	sFilterConfig.FilterBank = 0;
 	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
@@ -1198,23 +1183,6 @@ static void CAN_Config()
 	sFilterConfig.FilterIdHigh = (0x330 << 5);
 	sFilterConfig.FilterIdLow = 0;
 	sFilterConfig.FilterMaskIdHigh = (0x7F0 << 5);
-	sFilterConfig.FilterMaskIdLow = 0;
-	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
-	sFilterConfig.FilterActivation = ENABLE;
-	sFilterConfig.SlaveStartFilterBank = 14;
-
-	if (HAL_CAN_ConfigFilter(&hcan1, &sFilterConfig) != HAL_OK) {
-		/* filter configuration error */
-		Error_Handler();
-	}
-
-	/* filter can id = CAN_ID_RWS_OPT_x= 0x330 - 0x33F */
-	sFilterConfig.FilterBank = 2;
-	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
-	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_STAB_PNL << 5);
-	sFilterConfig.FilterIdLow = 0;
-	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_STAB_PNL << 5);
 	sFilterConfig.FilterMaskIdLow = 0;
 	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO0;
 	sFilterConfig.FilterActivation = ENABLE;
@@ -1322,11 +1290,6 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 			canRecvMotorSpeed.state = true;
 			memcpy(canRecvMotorSpeed.data, can1RxBuffer, canRecvMotorSpeed.size);
 			cRecvMtrVelo++;
-		}
-		else if (_id == canRecvStabilized.id) {
-			canRecvStabilized.state = true;
-			memcpy(canRecvStabilized.data, can1RxBuffer, canRecvStabilized.size);
-			cRecvStab++;
 		}
 	}
 
@@ -1863,15 +1826,8 @@ static void canRecvHandler()
 #if DEBUG_BUS==1 || DEBUG_CAM==1
 	const uint8_t startLineDebug = 10;
 #endif	//if DEBUG_BUS==1
-//	union
-//	{
-//		float f;
-//		uint8_t bytes[4];
-//	} _pitch;
-//	int16_t _yaw, _roll;
 
 	static uint32_t recvOptCamTimer = 0;
-//	static uint32_t recvOptImuTimer = 0;
 	static uint32_t recvOptLrfTimer = 0;
 	static uint32_t recvMotorTimer = 0;
 	uint8_t _u8, _zoomLevel;
@@ -1893,17 +1849,6 @@ static void canRecvHandler()
 			if (zoomValueFromOptCam != _u8) {
 				/* adjust crosshair */
 				crossAdjust(0, 0);
-//				/* change k_pid of tracking */
-//				PIDTuningsSet(&trkPidAzimuth, THC_K_PID_AZIMUTH[0], THC_K_PID_AZIMUTH[1],
-//						THC_K_PID_AZIMUTH[2]);
-//				PIDTuningsSet(&trkPidElevation, THC_K_PID_ELEVATION[0], THC_K_PID_ELEVATION[1],
-//						THC_K_PID_ELEVATION[2]);
-
-//				_zoomLevel = 1;
-//				PIDTuningsSet(&trkPidAzimuth, TRK_K_PID_AZIMUTH[_zoomLevel][0],
-//						TRK_K_PID_AZIMUTH[_zoomLevel][1], TRK_K_PID_AZIMUTH[_zoomLevel][2]);
-//				PIDTuningsSet(&trkPidElevation, TRK_K_PID_ELEVATION[_zoomLevel][0],
-//						TRK_K_PID_ELEVATION[_zoomLevel][1], TRK_K_PID_ELEVATION[_zoomLevel][2]);
 			}
 		}
 		/* if CAM==CAM_ST_SONY */
@@ -1911,12 +1856,6 @@ static void canRecvHandler()
 			if (zoomValueFromOptCam != _u8) {
 				/* adjust crosshair */
 				crossAdjust(xCross[_u8], yCross[_u8]);
-
-//				/* change k_pid of tracking */
-//				PIDTuningsSet(&trkPidAzimuth, TRK_K_PID_AZIMUTH[_zoomLevel][0],
-//						TRK_K_PID_AZIMUTH[_zoomLevel][1], TRK_K_PID_AZIMUTH[_zoomLevel][2]);
-//				PIDTuningsSet(&trkPidElevation, TRK_K_PID_ELEVATION[_zoomLevel][0],
-//						TRK_K_PID_ELEVATION[_zoomLevel][1], TRK_K_PID_ELEVATION[_zoomLevel][2]);
 			}
 		}
 		zoomValueFromOptCam = _u8;
@@ -1989,6 +1928,9 @@ static void canRecvHandler()
 			bitSet(buttonLed, 1);
 		else
 			bitClear(buttonLed, 1);
+
+		cAngleVelo[0] = ((uint16_t) canRecvMotorState.data[3] << 8) | canRecvMotorState.data[2];
+		cAngleVelo[1] = ((uint16_t) canRecvMotorState.data[5] << 8) | canRecvMotorState.data[4];
 
 #if DEBUG_BUS==1
 		bufLen = sprintf(buf, "%sRecv Motor: ", vt100_lineX[startLineDebug + 3]);
@@ -2306,7 +2248,7 @@ static void motorUpdateData(uint8_t enable, int32_t pan, int32_t tilt)
 
 static void motorHandler()
 {
-	uint32_t millis = HAL_GetTick();
+//	uint32_t millis = HAL_GetTick();
 	static uint32_t sendTimer = 1000;
 	static uint32_t stabModuleTimer = 2000;
 
@@ -2318,19 +2260,20 @@ static void motorHandler()
 
 #if MOVEMENT_CHANGE_ENABLE==1
 	if (bitRead(movementMode, MOVE_MEMORY_bit))
-		motorMemoryHandler(millis);
+		motorMemoryHandler(HAL_GetTick());
 	else if (bitRead(movementMode, MOVE_TRACK_bit))
-		motorTrackingHandler(millis);
+		motorTrackingHandler(HAL_GetTick());
 	else if (bitRead(movementMode, MOVE_STAB_bit))
-		motorStabHandler(millis);
+		motorStabHandler(HAL_GetTick());
 	else
-		motorJoystickHandler(millis);
+		motorJoystickHandler(HAL_GetTick());
 #else
 	motorJoystickHandler(millis);
 #endif	//if MOVEMENT_CHANGE_ENABLE==1
 
-	if (millis >= sendTimer) {
-		sendTimer = millis + MOTOR_UPDATE_TIMEOUT;
+//	if (HAL_GetTick() >= sendTimer && (stabilizeMode == MOVEMENT_MODE_OFF)) {
+	if (HAL_GetTick() >= sendTimer) {
+		sendTimer = HAL_GetTick() + MOTOR_UPDATE_TIMEOUT;
 
 		can1TxHeader.StdId = canSendMotorCommand.id;
 		memcpy(can1TxBuffer, canSendMotorCommand.data, canSendMotorCommand.size);
@@ -2338,76 +2281,76 @@ static void motorHandler()
 		if (HAL_CAN_AddTxMessage(&hcan1, &can1TxHeader, can1TxBuffer, &can1TxMailBox) == HAL_OK)
 			cSendMtrCmd++;
 		else
-			sendTimer = millis + 1;
+			sendTimer = HAL_GetTick() + 1;
 
 	}
 
-	if (millis >= stabModuleTimer) {
-		stabModuleTimer = millis + 100;
+	if (HAL_GetTick() >= stabModuleTimer) {
+		stabModuleTimer = HAL_GetTick() + 100;
 
-		can1TxHeader.StdId = canSendStabilized.id;
-		memcpy(can1TxBuffer, canSendStabilized.data, canSendStabilized.size);
-		can1TxHeader.DLC = canSendStabilized.size;
+		can1TxHeader.StdId = canSendStabMode.id;
+		memcpy(can1TxBuffer, canSendStabMode.data, canSendStabMode.size);
+		can1TxHeader.DLC = canSendStabMode.size;
 		if (HAL_CAN_AddTxMessage(&hcan1, &can1TxHeader, can1TxBuffer, &can1TxMailBox) == HAL_OK)
 			cSendStabCmd++;
 		else
-			stabModuleTimer = millis + 1;
+			stabModuleTimer = HAL_GetTick() + 1;
 	}
 
-#if DEBUG_STAB==1
-	Union_u x, y;
-	int32_t panValue, tiltValue;
-	static uint8_t counter = 0;
-	uint8_t dataXY[8];
-
-	if (stabilizeMode == MOVEMENT_MODE_OFF && trackingMode == MOVEMENT_MODE_OFF) {
-		if (canRecvStabilized.state) {
-			canRecvStabilized.state = false;
-
-			memcpy(dataXY, canRecvStabilized.data, 8);
-
-			/* find angular velocity request from stabilize module */
-			for ( int i = 0; i < 4; i++ ) {
-				x.b[i] = dataXY[i];
-				y.b[i] = dataXY[i + 4];
-			}
-
-			/* convert from deg/s to c/s */
-			panValue = (int32_t) DEG_TO_C_AZ(x.f);
-			if (abs(panValue) > MTR_SPEED_MAX) {
-				if (panValue >= 0)
-					panValue = MTR_SPEED_MAX;
-				else
-					panValue = 0 - MTR_SPEED_MAX;
-			}
-			tiltValue = (int32_t) DEG_TO_C_EL(y.f);
-			if (abs(tiltValue) > MTR_SPEED_MAX) {
-				if (tiltValue >= 0)
-					tiltValue = MTR_SPEED_MAX;
-				else
-					tiltValue = 0 - MTR_SPEED_MAX;
-			}
-
-			if (counter++ % 8 == 0) {
-#if DEBUG==1 && TRACK_LOGGER==0
-				bufLen = sprintf(buf, "%sStab: ", vt100_lineX[9]);
-				serial_write_str(&debug, buf, bufLen);
-
-//				for ( int i = 0; i < 4; i++ ) {
-//					bufLen = sprintf(buf, "%02X ", x.b[i]);
-//					serial_write_str(&debug, buf, bufLen);
-//				}
-//				for ( int i = 0; i < 4; i++ ) {
-//					bufLen = sprintf(buf, "%02X ", y.b[i]);
-//					serial_write_str(&debug, buf, bufLen);
-//				}
-				bufLen = sprintf(buf, "%d > %.3f %d > %.3f", panValue, x.f, tiltValue, y.f);
-				serial_write_str(&debug, buf, bufLen);
-#endif	//if DEBUG==1
-			}
-		}
-	}
-#endif	//if DEBUG_STAB==1
+//#if DEBUG_STAB==1
+//	Union_u x, y;
+//	int32_t panValue, tiltValue;
+//	static uint8_t counter = 0;
+//	uint8_t dataXY[8];
+//
+//	if (stabilizeMode == MOVEMENT_MODE_OFF && trackingMode == MOVEMENT_MODE_OFF) {
+//		if (canRecvStabilized.state) {
+//			canRecvStabilized.state = false;
+//
+//			memcpy(dataXY, canRecvStabilized.data, 8);
+//
+//			/* find angular velocity request from stabilize module */
+//			for ( int i = 0; i < 4; i++ ) {
+//				x.b[i] = dataXY[i];
+//				y.b[i] = dataXY[i + 4];
+//			}
+//
+//			/* convert from deg/s to c/s */
+//			panValue = (int32_t) DEG_TO_C_AZ(x.f);
+//			if (abs(panValue) > MTR_SPEED_MAX) {
+//				if (panValue >= 0)
+//					panValue = MTR_SPEED_MAX;
+//				else
+//					panValue = 0 - MTR_SPEED_MAX;
+//			}
+//			tiltValue = (int32_t) DEG_TO_C_EL(y.f);
+//			if (abs(tiltValue) > MTR_SPEED_MAX) {
+//				if (tiltValue >= 0)
+//					tiltValue = MTR_SPEED_MAX;
+//				else
+//					tiltValue = 0 - MTR_SPEED_MAX;
+//			}
+//
+//			if (counter++ % 8 == 0) {
+//#if DEBUG==1 && TRACK_LOGGER==0
+//				bufLen = sprintf(buf, "%sStab: ", vt100_lineX[9]);
+//				serial_write_str(&debug, buf, bufLen);
+//
+////				for ( int i = 0; i < 4; i++ ) {
+////					bufLen = sprintf(buf, "%02X ", x.b[i]);
+////					serial_write_str(&debug, buf, bufLen);
+////				}
+////				for ( int i = 0; i < 4; i++ ) {
+////					bufLen = sprintf(buf, "%02X ", y.b[i]);
+////					serial_write_str(&debug, buf, bufLen);
+////				}
+//				bufLen = sprintf(buf, "%d > %.3f %d > %.3f", panValue, x.f, tiltValue, y.f);
+//				serial_write_str(&debug, buf, bufLen);
+//#endif	//if DEBUG==1
+//			}
+//		}
+//	}
+//#endif	//if DEBUG_STAB==1
 
 }
 
@@ -2480,80 +2423,83 @@ static void stabPidInit()
 	stabilizeMode = MOVEMENT_MODE_ON;
 	panMoveMax = MTR_PAN_SPEED[2];
 	tiltMoveMax = MTR_TILT_SPEED[2];
-	canSendStabilized.data[0] = 1;
+	bitSet(canSendStabMode.data[0], 0);
+
+	motorUpdateData(0b11, 0, 0);
 }
 
 static void stabPidDeInit()
 {
 	stabilizeMode = MOVEMENT_MODE_OFF;
-	canSendStabilized.data[0] = 0;
+	bitClear(canSendStabMode.data[0], 0);
 	bitClear(movementMode, MOVE_STAB_bit);
 
-#if DEBUG_STAB==1 && TRACK_LOGGER==0
-	bufLen = sprintf(buf, "%stab mode=%d", vt100_lineX[9], stabilizeMode);
-	serial_write_str(&debug, buf, bufLen);
-#endif	//if DEBUG_STAB==1
-
+	motorUpdateData(0, 0, 0);
 }
 
 static void motorStabHandler(uint32_t millis)
 {
-	Union_u x, y;
-	int32_t panValue = 0, tiltValue = 0;
-	uint8_t dataXY[8];
-
-	if (canRecvStabilized.state) {
-		canRecvStabilized.state = false;
-
-		memcpy(dataXY, canRecvStabilized.data, 8);
-
-		/* find angular velocity request from stabilize module */
-		for ( int i = 0; i < 4; i++ ) {
-			x.b[i] = dataXY[i];
-			y.b[i] = dataXY[i + 4];
-		}
-
-		/* convert from deg/s to c/s */
-		panValue = (int32_t) DEG_TO_C_AZ(x.f);
-		if (abs(panValue) > MTR_SPEED_MAX) {
-			if (panValue >= 0)
-				panValue = MTR_SPEED_MAX;
-			else
-				panValue = 0 - MTR_SPEED_MAX;
-		}
-		tiltValue = (int32_t) DEG_TO_C_EL(y.f);
-		if (abs(tiltValue) > MTR_SPEED_MAX) {
-			if (tiltValue >= 0)
-				tiltValue = MTR_SPEED_MAX;
-			else
-				tiltValue = 0 - MTR_SPEED_MAX;
-		}
-
-		motorUpdateData(0b11, panValue, tiltValue);
-
-#if DEBUG_STAB==1 && TRACK_LOGGER==0
-		static uint32_t _timer = 0;
-		if (millis >= _timer) {
-			_timer = millis + 100;
-
-			bufLen = sprintf(buf, "%stab mode=%d\tpan= %.3f > %d tilt= %.3f > %d\r\n",
-					vt100_lineX[9], stabilizeMode, x.f, (int) panValue, y.f, (int) tiltValue);
-			serial_write_str(&debug, buf, bufLen);
-//		for ( int i = 0; i < 4; i++ ) {
-//			bufLen = sprintf(buf, "%02X ", x.b[i]);
-//			serial_write_str(&debug, buf, bufLen);
-//		}
-//		for ( int i = 0; i < 4; i++ ) {
-//			bufLen = sprintf(buf, "%02X ", y.b[i]);
-//			serial_write_str(&debug, buf, bufLen);
-//		}
-
-		}
-#endif	//if DEBUG_STAB==1
-
-	}
-
+	motorUpdateData(0b11, 0, 0);
 }
+
+//static void motorStabHandler(uint32_t millis)
+//{
+//	Union_u x, y;
+//	int32_t panValue = 0, tiltValue = 0;
+//	uint8_t dataXY[8];
+//
+//	if (canRecvStabilized.state) {
+//		canRecvStabilized.state = false;
+//
+//		memcpy(dataXY, canRecvStabilized.data, 8);
+//
+//		/* find angular velocity request from stabilize module */
+//		for ( int i = 0; i < 4; i++ ) {
+//			x.b[i] = dataXY[i];
+//			y.b[i] = dataXY[i + 4];
+//		}
+//
+//		/* convert from deg/s to c/s */
+//		panValue = (int32_t) DEG_TO_C_AZ(x.f);
+//		if (abs(panValue) > MTR_SPEED_MAX) {
+//			if (panValue >= 0)
+//				panValue = MTR_SPEED_MAX;
+//			else
+//				panValue = 0 - MTR_SPEED_MAX;
+//		}
+//		tiltValue = (int32_t) DEG_TO_C_EL(y.f);
+//		if (abs(tiltValue) > MTR_SPEED_MAX) {
+//			if (tiltValue >= 0)
+//				tiltValue = MTR_SPEED_MAX;
+//			else
+//				tiltValue = 0 - MTR_SPEED_MAX;
+//		}
+//
+//		motorUpdateData(0b11, panValue, tiltValue);
+//
+//#if DEBUG_STAB==1 && TRACK_LOGGER==0
+//		static uint32_t _timer = 0;
+//		if (millis >= _timer) {
+//			_timer = millis + 100;
+//
+//			bufLen = sprintf(buf, "%stab mode=%d\tpan= %.3f > %d tilt= %.3f > %d\r\n",
+//					vt100_lineX[9], stabilizeMode, x.f, (int) panValue, y.f, (int) tiltValue);
+//			serial_write_str(&debug, buf, bufLen);
+////		for ( int i = 0; i < 4; i++ ) {
+////			bufLen = sprintf(buf, "%02X ", x.b[i]);
+////			serial_write_str(&debug, buf, bufLen);
+////		}
+////		for ( int i = 0; i < 4; i++ ) {
+////			bufLen = sprintf(buf, "%02X ", y.b[i]);
+////			serial_write_str(&debug, buf, bufLen);
+////		}
+//
+//		}
+//#endif	//if DEBUG_STAB==1
+//
+//	}
+//
+//}
 
 static void motorStabStarting(uint32_t millis)
 {
