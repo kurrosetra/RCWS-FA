@@ -56,7 +56,7 @@ typedef union
 #define DEBUG					1
 
 #if DEBUG==1
-#	define DEBUG_MTR_POSVELO	0
+#	define DEBUG_MTR_POSVELO	1
 #	define DEBUG_INGENIA_DRIVER	0
 #	if DEBUG_INGENIA_DRIVER==1
 #		define MTR_ID			0x20
@@ -89,9 +89,7 @@ typedef union
 #define MOTOR_MAX_SPEED			116500UL	//1750RPM
 #define MOTOR_MAX_ACCEL			2500000UL
 
-#define TPDO4_EVENT_TIMER_100HZ			10
-
-#define MOTOR_UPDATE_TIMEOUT			10	//100HZ
+#define MOTOR_UPDATE_TIMEOUT	5
 
 /* USER CODE END PD */
 
@@ -159,10 +157,8 @@ servo_t mtrCock;
 volatile uint8_t limitSwitch = 0;
 
 uint32_t motorCommandTimeout = 0;
-uint32_t stabCommandTimeout = 0;
 uint32_t buttonCommandTimeout = 0;
 int32_t panelCommand[2];
-int32_t stabCommand[2];
 volatile bool cockStart = false;
 
 typedef enum
@@ -211,19 +207,15 @@ typedef struct
 
 TCanRecvBuffer canRecvPanel = { CAN_ID_RWS_PNL_MTR, false, { 0 }, 7, 0 };
 TCanRecvBuffer canRecvButton = { CAN_ID_RWS_BUTTON, false, { 0 }, 3, 0 };
-TCanRecvBuffer canRecvStabMode = { CAN_ID_RWS_PNL_STAB_MODE, false, { 0 }, 1, 0 };
-TCanRecvBuffer canRecvStabCommand = { CAN_ID_RWS_STAB_PNL, false, { 0 }, 8, 0 };
 
-TCanSendBuffer canSendMotor = { CAN_ID_RWS_MOTOR, { 0 }, 6 };
+TCanSendBuffer canSendMotor = { CAN_ID_RWS_MOTOR, { 0 }, 2 };
 TCanSendBuffer canSendMotorAngle = { CAN_ID_RWS_MTR_STAB_ANGLE, { 0 }, 8 };
 TCanSendBuffer canSendMotorSpeed = { CAN_ID_RWS_MTR_STAB_SPD, { 0 }, 8 };
 
 #if DEBUG_MTR_POSVELO==1
 volatile uint32_t countTPDO4 = 0;
 #endif	//if DEBUG_MTR_POSVELO==1
-volatile uint16_t countAngleVelo[2] = { 0, 0 };
-volatile uint32_t cStabMode = 0;
-volatile uint32_t cStabModule = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -244,11 +236,9 @@ static HAL_StatusTypeDef motorInit();
 static void motorStop(TServoState *motor);
 static void motorSpeed(TServoState *motor, int32_t spd);
 static void motorHandler();
-static void motorParamEventTime(Servo_t *servo, uint16_t rate);
+static void busCommandParsing();
 
 static HAL_StatusTypeDef busInit();
-static void busCommandParsing();
-static void stabCommandParsing();
 static void busHandler(CAN_HandleTypeDef *bus);
 static void busSendingHandler();
 
@@ -344,75 +334,20 @@ int main(void)
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
+	uint32_t millis;
 #if DEBUG_MTR_POSVELO==1
 	uint32_t countTpdoTimer = 0;
 	Union_u p, v;
+
 #endif	//if DEBUG_INGENIA_DRIVER==1
 
 	while (1) {
+		millis = HAL_GetTick();
 		HAL_IWDG_Refresh(&hiwdg);
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
 		/* TODO BEGIN LOOP*/
-
-		if (HAL_GetTick() >= buttonCommandTimeout) {
-			HAL_GPIO_WritePin(TRIGGER_ENABLE_GPIO_Port, TRIGGER_ENABLE_Pin, GPIO_PIN_RESET);
-			canRecvButton.online = false;
-		}
-
-		if (canRecvButton.state) {
-			canRecvButton.state = false;
-			buttonCommandTimeout = HAL_GetTick() + COMMAND_RECEIVE_TIMEOUT;
-			canRecvButton.online = true;
-
-			HAL_GPIO_WritePin(TRIGGER_ENABLE_GPIO_Port, TRIGGER_ENABLE_Pin,
-					bitRead(canRecvButton.data[0], 0));
-
-			cockStart = bitRead(canRecvButton.data[0], 1);
-		}
-
-		if (bitRead(canRecvStabMode.data[0], 0)) {
-			if (HAL_GetTick() >= stabCommandTimeout && canRecvStabCommand.online) {
-				canRecvStabCommand.online = false;
-				pan.enable = false;
-				tilt.enable = false;
-				HAL_GPIO_WritePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin, GPIO_PIN_SET);
-			}
-		}
-
-		if (HAL_GetTick() >= motorCommandTimeout && canRecvPanel.online) {
-			canRecvPanel.online = false;
-			if (!bitRead(canRecvStabMode.data[0], 0)) {
-				pan.enable = false;
-				tilt.enable = false;
-			}
-			HAL_GPIO_WritePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin, GPIO_PIN_SET);
-		}
-
-		if (canRecvPanel.state) {
-			canRecvPanel.state = false;
-			motorCommandTimeout = HAL_GetTick() + COMMAND_RECEIVE_TIMEOUT;
-			canRecvPanel.online = true;
-
-			busCommandParsing();
-			HAL_GPIO_TogglePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin);
-		}
-
-		if (bitRead(canRecvStabMode.data[0], 0)) {
-			if (canRecvStabCommand.state) {
-				canRecvStabCommand.state = false;
-				stabCommandTimeout = HAL_GetTick() + COMMAND_RECEIVE_TIMEOUT;
-				canRecvStabCommand.online = true;
-
-				stabCommandParsing();
-				HAL_GPIO_TogglePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin);
-			}
-		}
-
-		motorHandler();
-		busSendingHandler();
-
 #if DEBUG_MTR_POSVELO==1
 		uint8_t _dataRpdo[8];
 		if (HAL_GetTick() >= countTpdoTimer) {
@@ -472,6 +407,41 @@ int main(void)
 
 		}
 #endif	//if DEBUG_MTR_POSVELO==1
+
+		if (millis >= buttonCommandTimeout) {
+			HAL_GPIO_WritePin(TRIGGER_ENABLE_GPIO_Port, TRIGGER_ENABLE_Pin, GPIO_PIN_RESET);
+			canRecvButton.online = false;
+		}
+
+		if (canRecvButton.state) {
+			canRecvButton.state = false;
+			buttonCommandTimeout = millis + COMMAND_RECEIVE_TIMEOUT;
+			canRecvButton.online = true;
+
+			HAL_GPIO_WritePin(TRIGGER_ENABLE_GPIO_Port, TRIGGER_ENABLE_Pin,
+					bitRead(canRecvButton.data[0], 0));
+
+			cockStart = bitRead(canRecvButton.data[0], 1);
+		}
+
+		if (millis >= motorCommandTimeout && canRecvPanel.online) {
+			canRecvPanel.online = false;
+			pan.enable = false;
+			tilt.enable = false;
+			HAL_GPIO_WritePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin, GPIO_PIN_SET);
+		}
+
+		if (canRecvPanel.state) {
+			canRecvPanel.state = false;
+			motorCommandTimeout = millis + COMMAND_RECEIVE_TIMEOUT;
+			canRecvPanel.online = true;
+
+			busCommandParsing();
+			HAL_GPIO_TogglePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin);
+		}
+
+		motorHandler();
+		busSendingHandler();
 
 		/* TODO END LOOP*/
 	}	//while(1){
@@ -822,23 +792,6 @@ static void busSendingHandler()
 	static uint32_t _stateTimer = 1000;
 	static uint32_t _angleTimer = 1000;
 	static uint32_t _angularSpeedTimer = 1000;
-	static uint32_t sumAngleVeloTimer = 0;
-
-	if (HAL_GetTick() >= sumAngleVeloTimer) {
-		sumAngleVeloTimer = HAL_GetTick() + 1000;
-
-		canSendMotor.data[2] = countAngleVelo[0] & 0xFF;
-		canSendMotor.data[3] = (countAngleVelo[0] >> 8) & 0xFF;
-		canSendMotor.data[4] = countAngleVelo[1] & 0xFF;
-		canSendMotor.data[5] = (countAngleVelo[1] >> 8) & 0xFF;
-
-		bufLen = sprintf(buf, "%sSmode:Sval=%d:%d\tS(p:t)=%d:%d", vt100_lineX[15], cStabMode,
-				cStabModule, stabCommand[0], stabCommand[1]);
-		serial_write_str(&debug, buf, bufLen);
-
-		countAngleVelo[0] = countAngleVelo[1] = 0;
-		cStabMode = cStabModule = 0;
-	}
 
 	if (HAL_GetTick() >= _stateTimer) {
 		_stateTimer = HAL_GetTick() + 100;
@@ -849,7 +802,7 @@ static void busSendingHandler()
 				HAL_GPIO_ReadPin(TRIGGER_ENABLE_GPIO_Port, TRIGGER_ENABLE_Pin));
 		bitWrite(canSendMotor.data[1], 1, cockStart);
 
-		busTxHeader->StdId = canSendMotor.id;
+		busTxHeader->StdId = CAN_ID_RWS_MOTOR;
 		memcpy(busTxBuffer, canSendMotor.data, canSendMotor.size);
 		busTxHeader->DLC = canSendMotor.size;
 		if (HAL_CAN_AddTxMessage(&hcan2, busTxHeader, busTxBuffer, busTxMailBox) != HAL_OK)
@@ -874,7 +827,7 @@ static void busSendingHandler()
 	}
 
 	if (HAL_GetTick() >= _angleTimer) {
-		_angleTimer = HAL_GetTick() + TPDO4_EVENT_TIMER_100HZ;
+		_angleTimer = HAL_GetTick() + 10;
 
 		Union_u pAz, pEl;
 #if MTR_AZ_ENABLE==1
@@ -894,7 +847,7 @@ static void busSendingHandler()
 			canSendMotorAngle.data[i + 4] = pEl.b[i];
 		}
 
-		busTxHeader->StdId = canSendMotorAngle.id;
+		busTxHeader->StdId = CAN_ID_RWS_MTR_STAB_ANGLE;
 		memcpy(busTxBuffer, canSendMotorAngle.data, canSendMotorAngle.size);
 		busTxHeader->DLC = canSendMotorAngle.size;
 		if (HAL_CAN_AddTxMessage(&hcan2, busTxHeader, busTxBuffer, busTxMailBox) != HAL_OK)
@@ -902,7 +855,7 @@ static void busSendingHandler()
 	}
 
 	if (HAL_GetTick() >= _angularSpeedTimer) {
-		_angularSpeedTimer = HAL_GetTick() + TPDO4_EVENT_TIMER_100HZ;
+		_angularSpeedTimer = HAL_GetTick() + 10;
 
 		Union_u vAz, vEl;
 #if MTR_AZ_ENABLE==1
@@ -922,44 +875,11 @@ static void busSendingHandler()
 			canSendMotorSpeed.data[i + 4] = vEl.b[i];
 		}
 
-		busTxHeader->StdId = canSendMotorSpeed.id;
+		busTxHeader->StdId = CAN_ID_RWS_MTR_STAB_SPD;
 		memcpy(busTxBuffer, canSendMotorSpeed.data, canSendMotorSpeed.size);
 		busTxHeader->DLC = canSendMotorSpeed.size;
 		if (HAL_CAN_AddTxMessage(&hcan2, busTxHeader, busTxBuffer, busTxMailBox) != HAL_OK)
 			_angleTimer = HAL_GetTick() + 1;
-	}
-}
-
-static void stabCommandParsing()
-{
-	Union_u p, t;
-	uint8_t dataPT[8];
-
-	pan.enable = bitRead(canRecvPanel.data[0], 0);
-	tilt.enable = bitRead(canRecvPanel.data[0], 1);
-
-	memcpy(dataPT, canRecvStabCommand.data, canRecvStabCommand.size);
-
-	/* find angular velocity request from stabilize module */
-	for ( int i = 0; i < 4; i++ ) {
-		p.b[i] = dataPT[i];
-		t.b[i] = dataPT[i + 4];
-	}
-
-	/* convert from deg/s to c/s */
-	stabCommand[0] = (int32_t) DEG_TO_C_AZ(p.f);
-	if (abs(stabCommand[0]) > MOTOR_MAX_SPEED) {
-		if (stabCommand[0] >= 0)
-			stabCommand[0] = MOTOR_MAX_SPEED;
-		else
-			stabCommand[0] = 0 - MOTOR_MAX_SPEED;
-	}
-	stabCommand[1] = (int32_t) DEG_TO_C_EL(t.f);
-	if (abs(stabCommand[1]) > MOTOR_MAX_SPEED) {
-		if (stabCommand[1] >= 0)
-			stabCommand[1] = MOTOR_MAX_SPEED;
-		else
-			stabCommand[1] = 0 - MOTOR_MAX_SPEED;
 	}
 }
 
@@ -1016,12 +936,10 @@ static void busCommandParsing()
 		panelCommand[1] = 0;
 
 #if DEBUG==1
-	bufLen = sprintf(buf, "%sStab:%d\tP:%d %d %d\tT:%d %d %d", vt100_lineX[7],
-			bitRead(canRecvStabMode.data[0], 0), pan.enable, (int) panelCommand[0],
-			(int) stabCommand[0], tilt.enable, (int) panelCommand[1], (int) stabCommand[1]);
+	bufLen = sprintf(buf, "%sP:%d %d\tT:%d %d", vt100_lineX[7], pan.enable, (int) panelCommand[0],
+			tilt.enable, (int) panelCommand[1]);
 	serial_write_str(&debug, buf, bufLen);
 #endif	//if DEBUG==1
-
 }
 
 static void motorStop(TServoState *motor)
@@ -1052,17 +970,6 @@ static void motorHandler()
 {
 	static uint32_t motorUpdateTimer = 0;
 	static uint8_t motorUpdateCounter = 0;
-	int32_t *panCommand;
-	int32_t *tiltCommand;
-
-	if (bitRead(canRecvStabMode.data[0], 0)) {
-		panCommand = &stabCommand[0];
-		tiltCommand = &stabCommand[1];
-	}
-	else {
-		panCommand = &panelCommand[0];
-		tiltCommand = &panelCommand[1];
-	}
 
 #if MTR_AZ_ENABLE==1
 	static _Bool panEnable = 1;
@@ -1121,28 +1028,20 @@ static void motorHandler()
 #endif	//if MTR_EL_ENABLE==1
 
 	if (HAL_GetTick() >= motorUpdateTimer) {
-		motorUpdateTimer = HAL_GetTick() + (MOTOR_UPDATE_TIMEOUT / 2);
+		motorUpdateTimer = HAL_GetTick() + MOTOR_UPDATE_TIMEOUT;
 
 #if MTR_AZ_ENABLE==1
 		if (panEnable && !bitRead(motorUpdateCounter, 0))
-			motorSpeed(&pan, *panCommand);
+			motorSpeed(&pan, panelCommand[0]);
 #endif	//if MTR_AZ_ENABLE==1
 
 #if MTR_EL_ENABLE==1
 		if (tiltEnable && bitRead(motorUpdateCounter, 0))
-			motorSpeed(&tilt, *tiltCommand);
+			motorSpeed(&tilt, panelCommand[1]);
 #endif	//if MTR_EL_ENABLE==1
 
 		motorUpdateCounter++;
 	}
-}
-
-static void motorParamEventTime(Servo_t *servo, uint16_t rate)
-{
-	/* set TPDO4 event timer */
-	Ingenia_write_sdo_u16(servo, 0x1803, 5, rate);
-//	/* set TPDO4 inhibit time (max transmission rate to 200Hz */
-//	Ingenia_write_sdo_u16(servo, 0x1803, 3, 20);
 }
 
 static void motorParamInit(Servo_t *servo)
@@ -1163,9 +1062,6 @@ static void motorParamInit(Servo_t *servo)
 	Ingenia_write_sdo_u32(servo, 0x6084, 0, MOTOR_MAX_ACCEL);
 	/* set max profile quick stop de-acceleration */
 	Ingenia_write_sdo_u32(servo, 0x6085, 0, 2 * MOTOR_MAX_ACCEL);
-//	/* set TPDO4 inhibit time (max transmission rate to 250Hz */
-//	Ingenia_write_sdo_u16(servo, 0x1803, 3, 250);
-//	motorParamEventTime(servo, TPDO4_EVENT_TIMER_100HZ);
 }
 
 static HAL_StatusTypeDef motorInit()
@@ -1230,13 +1126,6 @@ static HAL_StatusTypeDef motorInit()
 #endif	//if DEBUG==1
 #endif	//if MTR_EL_ENABLE==1
 
-#if MTR_AZ_ENABLE==1
-	motorParamEventTime(pan.servo, TPDO4_EVENT_TIMER_100HZ);
-#endif	//if MTR_AZ_ENABLE==1
-#if MTR_EL_ENABLE==1
-	motorParamEventTime(tilt.servo, TPDO4_EVENT_TIMER_100HZ);
-#endif	//if MTR_EL_ENABLE==1
-
 #if MTR_COCK_ENABLE==1
 	Ingenia_init(cock.servo, MTR_COCK_ID);
 #endif	//if MTR_COCK_ENABLE==1
@@ -1255,7 +1144,6 @@ static HAL_StatusTypeDef busInit()
 	CAN_FilterTypeDef sFilterConfig;
 
 	/*##-2- Configure the CAN Filter ###########################################*/
-
 	sFilterConfig.FilterBank = 14;
 	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
 	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
@@ -1278,38 +1166,6 @@ static HAL_StatusTypeDef busInit()
 	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_BUTTON << 5);
 	sFilterConfig.FilterIdLow = 0;
 	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_BUTTON << 5);
-	sFilterConfig.FilterMaskIdLow = 0;
-	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO1;
-	sFilterConfig.FilterActivation = ENABLE;
-	sFilterConfig.SlaveStartFilterBank = 14;
-
-	if (HAL_CAN_ConfigFilter(&hcan2, &sFilterConfig) != HAL_OK) {
-		/* filter configuration error */
-		return HAL_ERROR;
-	}
-
-	sFilterConfig.FilterBank = 16;
-	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
-	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_PNL_STAB_MODE << 5);
-	sFilterConfig.FilterIdLow = 0;
-	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_PNL_STAB_MODE << 5);
-	sFilterConfig.FilterMaskIdLow = 0;
-	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO1;
-	sFilterConfig.FilterActivation = ENABLE;
-	sFilterConfig.SlaveStartFilterBank = 14;
-
-	if (HAL_CAN_ConfigFilter(&hcan2, &sFilterConfig) != HAL_OK) {
-		/* filter configuration error */
-		return HAL_ERROR;
-	}
-
-	sFilterConfig.FilterBank = 17;
-	sFilterConfig.FilterMode = CAN_FILTERMODE_IDMASK;
-	sFilterConfig.FilterScale = CAN_FILTERSCALE_32BIT;
-	sFilterConfig.FilterIdHigh = (CAN_ID_RWS_STAB_PNL << 5);
-	sFilterConfig.FilterIdLow = 0;
-	sFilterConfig.FilterMaskIdHigh = (CAN_ID_RWS_STAB_PNL << 5);
 	sFilterConfig.FilterMaskIdLow = 0;
 	sFilterConfig.FilterFIFOAssignment = CAN_RX_FIFO1;
 	sFilterConfig.FilterActivation = ENABLE;
@@ -1348,23 +1204,13 @@ static void busHandler(CAN_HandleTypeDef *bus)
 
 	if (HAL_CAN_GetRxMessage(bus, CAN_RX_FIFO1, busRxHeader, busRxBuffer) == HAL_OK) {
 		_id = busRxHeader->StdId;
-		if (_id == canRecvPanel.id) {
+		if (_id == CAN_ID_RWS_PNL_MTR) {
 			canRecvPanel.state = true;
 			memcpy(canRecvPanel.data, busRxBuffer, canRecvPanel.size);
 		}
-		else if (_id == canRecvButton.id) {
+		else if (_id == CAN_ID_RWS_BUTTON) {
 			canRecvButton.state = true;
 			memcpy(canRecvButton.data, busRxBuffer, canRecvButton.size);
-		}
-		else if (_id == canRecvStabMode.id) {
-			canRecvStabMode.state = true;
-			memcpy(canRecvStabMode.data, busRxBuffer, canRecvStabMode.size);
-			cStabMode++;
-		}
-		else if (_id == canRecvStabCommand.id) {
-			canRecvStabCommand.state = true;
-			memcpy(canRecvStabCommand.data, busRxBuffer, canRecvStabCommand.size);
-			cStabModule++;
 		}
 	}
 }
@@ -1409,8 +1255,6 @@ void Ingenia_tpdo_callback(CAN_Buffer_t *buffer)
 					_tem = C_AZ_FULLSWING - _tem;
 				pan.relPosition = C_TO_DEG_AZ(_tem);
 				pan.velo = C_TO_DEG_AZ(_velo);
-
-				countAngleVelo[0]++;
 			}
 #endif	//if MTR_AZ_ENABLE==1
 
@@ -1421,8 +1265,6 @@ void Ingenia_tpdo_callback(CAN_Buffer_t *buffer)
 
 				tilt.relPosition = C_TO_DEG_EL(_pos);
 				tilt.velo = C_TO_DEG_EL(_velo);
-
-				countAngleVelo[1]++;
 			}
 #endif	//if MTR_EL_ENABLE==1
 
