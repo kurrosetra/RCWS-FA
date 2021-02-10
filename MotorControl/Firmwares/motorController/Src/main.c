@@ -29,6 +29,7 @@
 #include "rwsCanID.h"
 #include "stm_hal_serial.h"
 #include "Ingenia_CanServoDriver.h"
+#include "stabControl.h"
 
 /* USER CODE END Includes */
 

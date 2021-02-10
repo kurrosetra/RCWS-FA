@@ -2442,65 +2442,6 @@ static void motorStabHandler(uint32_t millis)
 	motorUpdateData(0b11, 0, 0);
 }
 
-//static void motorStabHandler(uint32_t millis)
-//{
-//	Union_u x, y;
-//	int32_t panValue = 0, tiltValue = 0;
-//	uint8_t dataXY[8];
-//
-//	if (canRecvStabilized.state) {
-//		canRecvStabilized.state = false;
-//
-//		memcpy(dataXY, canRecvStabilized.data, 8);
-//
-//		/* find angular velocity request from stabilize module */
-//		for ( int i = 0; i < 4; i++ ) {
-//			x.b[i] = dataXY[i];
-//			y.b[i] = dataXY[i + 4];
-//		}
-//
-//		/* convert from deg/s to c/s */
-//		panValue = (int32_t) DEG_TO_C_AZ(x.f);
-//		if (abs(panValue) > MTR_SPEED_MAX) {
-//			if (panValue >= 0)
-//				panValue = MTR_SPEED_MAX;
-//			else
-//				panValue = 0 - MTR_SPEED_MAX;
-//		}
-//		tiltValue = (int32_t) DEG_TO_C_EL(y.f);
-//		if (abs(tiltValue) > MTR_SPEED_MAX) {
-//			if (tiltValue >= 0)
-//				tiltValue = MTR_SPEED_MAX;
-//			else
-//				tiltValue = 0 - MTR_SPEED_MAX;
-//		}
-//
-//		motorUpdateData(0b11, panValue, tiltValue);
-//
-//#if DEBUG_STAB==1 && TRACK_LOGGER==0
-//		static uint32_t _timer = 0;
-//		if (millis >= _timer) {
-//			_timer = millis + 100;
-//
-//			bufLen = sprintf(buf, "%stab mode=%d\tpan= %.3f > %d tilt= %.3f > %d\r\n",
-//					vt100_lineX[9], stabilizeMode, x.f, (int) panValue, y.f, (int) tiltValue);
-//			serial_write_str(&debug, buf, bufLen);
-////		for ( int i = 0; i < 4; i++ ) {
-////			bufLen = sprintf(buf, "%02X ", x.b[i]);
-////			serial_write_str(&debug, buf, bufLen);
-////		}
-////		for ( int i = 0; i < 4; i++ ) {
-////			bufLen = sprintf(buf, "%02X ", y.b[i]);
-////			serial_write_str(&debug, buf, bufLen);
-////		}
-//
-//		}
-//#endif	//if DEBUG_STAB==1
-//
-//	}
-//
-//}
-
 static void motorStabStarting(uint32_t millis)
 {
 	bitSet(movementMode, MOVE_STAB_bit);
