@@ -90,9 +90,6 @@ typedef union
 #define MOTOR_MAX_ACCEL			2500000UL
 
 #define TPDO4_EVENT_TIMER_100HZ			10
-#define TPDO4_EVENT_TIMER_125HZ			8
-#define TPDO4_EVENT_TIMER_200HZ			5
-#define TPDO4_EVENT_TIMER				TPDO4_EVENT_TIMER_100HZ
 
 #define MOTOR_UPDATE_TIMEOUT			10	//100HZ
 
@@ -835,9 +832,8 @@ static void busSendingHandler()
 		canSendMotor.data[4] = countAngleVelo[1] & 0xFF;
 		canSendMotor.data[5] = (countAngleVelo[1] >> 8) & 0xFF;
 
-		bufLen = sprintf(buf, "%sSmode:Sval=%d:%d\tS(p:t)=%d:%d\tAV(p:t)=%d:%d", vt100_lineX[15],
-				cStabMode, cStabModule, stabCommand[0], stabCommand[1], countAngleVelo[0],
-				countAngleVelo[1]);
+		bufLen = sprintf(buf, "%sSmode:Sval=%d:%d\tS(p:t)=%d:%d", vt100_lineX[15], cStabMode,
+				cStabModule, stabCommand[0], stabCommand[1]);
 		serial_write_str(&debug, buf, bufLen);
 
 		countAngleVelo[0] = countAngleVelo[1] = 0;
@@ -878,7 +874,7 @@ static void busSendingHandler()
 	}
 
 	if (HAL_GetTick() >= _angleTimer) {
-		_angleTimer = HAL_GetTick() + TPDO4_EVENT_TIMER;
+		_angleTimer = HAL_GetTick() + TPDO4_EVENT_TIMER_100HZ;
 
 		Union_u pAz, pEl;
 #if MTR_AZ_ENABLE==1
@@ -906,7 +902,7 @@ static void busSendingHandler()
 	}
 
 	if (HAL_GetTick() >= _angularSpeedTimer) {
-		_angularSpeedTimer = HAL_GetTick() + TPDO4_EVENT_TIMER;
+		_angularSpeedTimer = HAL_GetTick() + TPDO4_EVENT_TIMER_100HZ;
 
 		Union_u vAz, vEl;
 #if MTR_AZ_ENABLE==1
@@ -1167,6 +1163,9 @@ static void motorParamInit(Servo_t *servo)
 	Ingenia_write_sdo_u32(servo, 0x6084, 0, MOTOR_MAX_ACCEL);
 	/* set max profile quick stop de-acceleration */
 	Ingenia_write_sdo_u32(servo, 0x6085, 0, 2 * MOTOR_MAX_ACCEL);
+//	/* set TPDO4 inhibit time (max transmission rate to 250Hz */
+//	Ingenia_write_sdo_u16(servo, 0x1803, 3, 250);
+//	motorParamEventTime(servo, TPDO4_EVENT_TIMER_100HZ);
 }
 
 static HAL_StatusTypeDef motorInit()
@@ -1232,10 +1231,10 @@ static HAL_StatusTypeDef motorInit()
 #endif	//if MTR_EL_ENABLE==1
 
 #if MTR_AZ_ENABLE==1
-	motorParamEventTime(pan.servo, TPDO4_EVENT_TIMER);
+	motorParamEventTime(pan.servo, TPDO4_EVENT_TIMER_100HZ);
 #endif	//if MTR_AZ_ENABLE==1
 #if MTR_EL_ENABLE==1
-	motorParamEventTime(tilt.servo, TPDO4_EVENT_TIMER);
+	motorParamEventTime(tilt.servo, TPDO4_EVENT_TIMER_100HZ);
 #endif	//if MTR_EL_ENABLE==1
 
 #if MTR_COCK_ENABLE==1
