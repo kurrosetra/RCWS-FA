@@ -180,10 +180,10 @@ servo_t mtrCock;
 
 volatile uint8_t limitSwitch = 0;
 
-int32_t manualCommand[2];
-int32_t stabCommand[2];
-int32_t trackCommand[2];
-int32_t *panCommand, *tiltCommand;
+int32_t manualCommand[2] = { 0, 0 };
+int32_t stabCommand[2] = { 0, 0 };
+int32_t trackCommand[2] = { 0, 0 };
+int32_t *panCommand = &manualCommand[0], *tiltCommand = &manualCommand[1];
 volatile bool cockStart = false;
 
 typedef enum
@@ -230,7 +230,7 @@ typedef struct
 	uint8_t size;
 } TCanSendBuffer;
 
-TCanRecvBuffer canRecvPanel = { CAN_ID_RWS_PNL_MTR, false, { 0 }, 7, 0 };
+TCanRecvBuffer canRecvPanel = { CAN_ID_RWS_PNL_MTR, false, { 0 }, 8, 0 };
 TCanRecvBuffer canRecvButton = { CAN_ID_RWS_BUTTON, false, { 0 }, 3, 0 };
 TCanRecvBuffer canRecvMoveMode = { CAN_ID_RWS_PNL_STAB_MODE, false, { 0 }, 6, 0 };
 TCanRecvBuffer canRecvStabCommand = { CAN_ID_RWS_STAB_MTR_STB, false, { 0 }, 8, 0 };
@@ -371,6 +371,10 @@ int main(void)
 	Union_u p, v;
 #endif	//if DEBUG_INGENIA_DRIVER==1
 
+#if DEBUG==1
+	uint32_t dTimer = 0;
+#endif	//if DEBUG==1
+
 	while (1) {
 		HAL_IWDG_Refresh(&hiwdg);
 		/* USER CODE END WHILE */
@@ -381,6 +385,16 @@ int main(void)
 		busExpirationHandler();
 		motorHandler();
 		busSendingHandler();
+
+#if DEBUG==1
+		if (HAL_GetTick() >= dTimer) {
+			dTimer = HAL_GetTick() + 100;
+
+			bufLen = sprintf(buf, "%s0x%02X st=%d;en=%d:%d\t%d:%d", vt100_lineX[8],canRecvMoveMode.data[0], moveState, pan.enable,
+					tilt.enable, *panCommand, *tiltCommand);
+			serial_write_str(&debug, buf, bufLen);
+		}
+#endif	//if DEBUG==1
 
 #if DEBUG_MTR_POSVELO==1
 		uint8_t _dataRpdo[8];
@@ -917,9 +931,8 @@ static void busExpirationHandler()
 			mStateTemp = MOVEMENT_MANUAL;
 
 		if (moveState != mStateTemp) {
-			initMovementState();
-
 			moveState = mStateTemp;
+			initMovementState();
 		}
 
 		HAL_GPIO_TogglePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin);
@@ -942,9 +955,17 @@ static void busSendingHandler()
 		canSendMotor.data[4] = crCounter.angleVelo[1] & 0xFF;
 		canSendMotor.data[5] = (crCounter.angleVelo[1] >> 8) & 0xFF;
 
+		bufLen = sprintf(buf, "%sMval=%d\t\tM(p:t)=%d:%d", vt100_lineX[14],
+				(int) crCounter.manualCommand, (int) manualCommand[0], (int) manualCommand[1]);
+		serial_write_str(&debug, buf, bufLen);
+
 		bufLen = sprintf(buf, "%sSmode:Sval=%d:%d\tS(p:t)=%d:%d", vt100_lineX[15],
 				(int) crCounter.stabMode, (int) crCounter.stabCommand, (int) stabCommand[0],
 				(int) stabCommand[1]);
+		serial_write_str(&debug, buf, bufLen);
+
+		bufLen = sprintf(buf, "%sTval=%d\tT(p:t)=%d:%d", vt100_lineX[16],
+				(int) crCounter.trackCommand, (int) trackCommand[0], (int) trackCommand[1]);
 		serial_write_str(&debug, buf, bufLen);
 
 		crCounter.angleVelo[0] = crCounter.angleVelo[1] = 0;
