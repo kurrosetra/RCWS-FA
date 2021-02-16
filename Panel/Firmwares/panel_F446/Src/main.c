@@ -313,6 +313,8 @@ volatile uint32_t cSendMtrCmd = 0;
 volatile uint32_t cSendButtonCmd = 0;
 volatile uint32_t cSendStabCmd = 0;
 
+uint32_t cTrackTelemetry = 0;
+
 uint8_t battVolt = 0;
 
 typedef enum
@@ -628,11 +630,12 @@ int main(void)
 		if (HAL_GetTick() >= _countTimer) {
 			_countTimer = HAL_GetTick() + 1000;
 
-			bufLen = sprintf(buf, "%sRecv packets:\t(MS)%d (MA)%d (MV)%d (OC)%d (OL)%d (S)%d %d-%d",
+			bufLen = sprintf(buf,
+					"%sRecv packets:\t(MS)%d (MA)%d (MV)%d (OC)%d (OL)%d (S)%d %d-%d TT:%d",
 					vt100_lineX[11], cRecvMtrState, cRecvMtrAngle, cRecvMtrVelo, cRecvOptCam,
-					cRecvOptLrf, cRecvStab, cAngleVelo[0], cAngleVelo[1]);
+					cRecvOptLrf, cRecvStab, cAngleVelo[0], cAngleVelo[1], cTrackTelemetry);
 			cRecvMtrState = cRecvMtrAngle = cRecvMtrVelo = cRecvOptCam = cRecvOptLrf = cRecvStab =
-					0;
+					cTrackTelemetry = 0;
 			serial_write_str(&debug, buf, bufLen);
 
 			bufLen = sprintf(buf, "%sSend packets:\t(MC)%d (BC)%d (SC)%d", vt100_lineX[12],
@@ -2176,6 +2179,7 @@ static void pcHandler()
 //						trackingPidInit();
 //					}
 				}	//if (tokens)
+				cTrackTelemetry++;
 			}	//if (s)
 		}
 
