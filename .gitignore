@@ -38,11 +38,13 @@
 ~*
 *.PcbDocPreview
 *.lck
+Debug/
+Release/
+Drivers/
 include/
 inc/
 Test/
 test/
-*_hal_*.c
 *_hal.c
 *.launch
 *.s
