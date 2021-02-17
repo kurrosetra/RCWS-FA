@@ -102,7 +102,7 @@ char buf[UART_BUFSIZE];
 
 Ring_Buffer_t tx1Buffer = { { 0 }, 0, 0 };
 Ring_Buffer_t rx1Buffer = { { 0 }, 0, 0 };
-TSerial pc = { &rx1Buffer, &tx1Buffer, &huart1 };
+TSerial imu = { &rx1Buffer, &tx1Buffer, &huart1 };
 
 #if DEBUG==1
 Ring_Buffer_t tx2Buffer = { { 0 }, 0, 0 };
@@ -309,19 +309,21 @@ TCanSendBuffer canSendStabMode = { CAN_ID_RWS_PNL_STAB_MODE, { 0 }, 1 };
 TCanSendBuffer canSendStabCorrection = { CAN_ID_RWS_PNL_STAB_CORR_STB, { 0 }, 8 };
 TCanSendBuffer canSendTrackCorrection = { CAN_ID_RWS_PNL_STAB_CORR_TRK, { 0 }, 8 };
 
-volatile uint32_t cRecvMtrState = 0;
-volatile uint32_t cRecvMtrAngle = 0;
-volatile uint32_t cRecvMtrVelo = 0;
-volatile uint32_t cRecvOptLrf = 0;
-volatile uint32_t cRecvOptCam = 0;
+volatile uint16_t cRecvMtrState = 0;
+volatile uint16_t cRecvMtrAngle = 0;
+volatile uint16_t cRecvMtrVelo = 0;
+volatile uint16_t cRecvOptLrf = 0;
+volatile uint16_t cRecvOptCam = 0;
 volatile uint16_t cAngleVelo[2] = { 0, 0 };
-volatile uint32_t cRecvStackerYpr = 0;
+volatile uint16_t cRecvStackerYpr = 0;
 
-volatile uint32_t cSendMtrCmd = 0;
-volatile uint32_t cSendButtonCmd = 0;
-volatile uint32_t cSendStabCmd = 0;
+volatile uint16_t cSendButtonCmd = 0;
+volatile uint16_t cSendMoveMode = 0;
+volatile uint16_t cSendManCorr = 0;
+volatile uint16_t cSendStabCorr = 0;
+volatile uint16_t cSendTrackCorr = 0;
 
-uint32_t cTrackTelemetry = 0;
+uint16_t cTrackTelemetry = 0;
 
 uint8_t battVolt = 0;
 
@@ -521,7 +523,7 @@ int main(void)
 #endif	//if DEBUG
 
 	serial_init(&button);
-	serial_init(&pc);
+	serial_init(&imu);
 
 	CAN_Config();
 
@@ -568,64 +570,64 @@ int main(void)
 			HAL_GPIO_TogglePin(LED_BUILTIN_GPIO_Port, LED_BUILTIN_Pin);
 		}
 
-		bool cmdCompleted = false;
-		if (serial_available(&debug)) {
-			char c[2] = { 0, 0 };
-			c[0] = serial_read(&debug);
-			if (c[0] == '$')
-				memset(cmdPID, 0, UART_BUFSIZE);
-			else if (c[0] == '*')
-				cmdCompleted = true;
-
-			strcat(cmdPID, c);
-		}
-
-		if (cmdCompleted) {
-			char *s;
-			char **tokens;
-
-			/*
-			 * contoh format update pid:
-			 * $PID,[ZOOM_LEVEL],Kp1,Kp2,Kd1,Kd2,Ki1,Ki2,[THRESHOLD]*
-			 * $PID,0,0.0,0.0,0.0,0.0,0.0,0.0,0*
-			 */
-
-			s = strstr(cmdPID, "$PID,");
-			if (s) {
-				int zoomLevel;
-				float f[6];
-				int threshold;
-
-				tokens = str_split(cmdPID, ',');
-				if (tokens) {
-					for ( int i = 0; *(tokens + i); i++ ) {
-						s = *(tokens + i);
-
-						if (i == 1)
-							zoomLevel = atoi(s);
-						else if (i == 8)
-							threshold = atoi(s);
-						else if (i > 1 && i < 8) {
-							f[i - 2] = atof(s);
-						}
-						free(*(tokens + i));
-					}
-					free(tokens);
-				}
-
-				if (zoomLevel >= 0 && zoomLevel <= 3) {
-					Kontrol_Set(zoomLevel, f, threshold);
-					Kontrol_Get(zoomLevel, &pid);
-					bufLen = sprintf(buf, "\r\nPID[%d]= %.5f %.5f %.5f %.5f %.5f %.5f %d\r\n",
-							zoomLevel, pid.kp1, pid.kp2, pid.kd1, pid.kd2, pid.ki1, pid.ki2,
-							pid.thresholdPX);
-
-					while (ring_buffer_left(debug.TBufferTx) <= bufLen)
-						HAL_Delay(1);
-					serial_write_str(&debug, buf, bufLen);
-				}
-			}
-		}
+//		bool cmdCompleted = false;
+//		if (serial_available(&debug)) {
+//			char c[2] = { 0, 0 };
+//			c[0] = serial_read(&debug);
+//			if (c[0] == '$')
+//				memset(cmdPID, 0, UART_BUFSIZE);
+//			else if (c[0] == '*')
+//				cmdCompleted = true;
+//
+//			strcat(cmdPID, c);
+//		}
+//
+//		if (cmdCompleted) {
+//			char *s;
+//			char **tokens;
+//
+//			/*
+//			 * contoh format update pid:
+//			 * $PID,[ZOOM_LEVEL],Kp1,Kp2,Kd1,Kd2,Ki1,Ki2,[THRESHOLD]*
+//			 * $PID,0,0.0,0.0,0.0,0.0,0.0,0.0,0*
+//			 */
+//
+//			s = strstr(cmdPID, "$PID,");
+//			if (s) {
+//				int zoomLevel;
+//				float f[6];
+//				int threshold;
+//
+//				tokens = str_split(cmdPID, ',');
+//				if (tokens) {
+//					for ( int i = 0; *(tokens + i); i++ ) {
+//						s = *(tokens + i);
+//
+//						if (i == 1)
+//							zoomLevel = atoi(s);
+//						else if (i == 8)
+//							threshold = atoi(s);
+//						else if (i > 1 && i < 8) {
+//							f[i - 2] = atof(s);
+//						}
+//						free(*(tokens + i));
+//					}
+//					free(tokens);
+//				}
+//
+//				if (zoomLevel >= 0 && zoomLevel <= 3) {
+//					Kontrol_Set(zoomLevel, f, threshold);
+//					Kontrol_Get(zoomLevel, &pid);
+//					bufLen = sprintf(buf, "\r\nPID[%d]= %.5f %.5f %.5f %.5f %.5f %.5f %d\r\n",
+//							zoomLevel, pid.kp1, pid.kp2, pid.kd1, pid.kd2, pid.ki1, pid.ki2,
+//							pid.thresholdPX);
+//
+//					while (ring_buffer_left(debug.TBufferTx) <= bufLen)
+//						HAL_Delay(1);
+//					serial_write_str(&debug, buf, bufLen);
+//				}
+//			}
+//		}
 
 		if (HAL_GetTick() >= _countTimer) {
 			_countTimer = HAL_GetTick() + 1000;
@@ -637,23 +639,12 @@ int main(void)
 					cTrackTelemetry = 0;
 			serial_write_str(&debug, buf, bufLen);
 
-			bufLen = sprintf(buf, "%sSend packets:\t(MC)%d (BC)%d (SC)%d", vt100_lineX[12],
-					cSendMtrCmd, cSendButtonCmd, cSendStabCmd);
-			cSendMtrCmd = cSendButtonCmd = cSendStabCmd = 0;
+			bufLen = sprintf(buf, "%sSend packets:\t(Mode)%d (BC)%d (MC)%d (SC)%d (TC)%d",
+					vt100_lineX[12], cSendMoveMode, cSendButtonCmd, cSendManCorr, cSendStabCorr,
+					cSendTrackCorr);
+			cSendManCorr = cSendButtonCmd = cSendMoveMode = cSendStabCorr = cSendTrackCorr = 0;
 			serial_write_str(&debug, buf, bufLen);
 
-//			char *startingLine = vt100_lineX[15];
-//			for ( int i = 0; i < 4; i++ ) {
-//				Kontrol_Get(i, &pid);
-//				bufLen = sprintf(buf, "%sPID[%d]= %.5f %.5f %.5f %.5f %.5f %.5f %d", startingLine,
-//						i, pid.kp1, pid.kp2, pid.kd1, pid.kd2, pid.ki1, pid.ki2, pid.thresholdPX);
-//
-//				while (ring_buffer_left(debug.TBufferTx) <= bufLen)
-//					HAL_Delay(1);
-//				serial_write_str(&debug, buf, bufLen);
-//
-//				startingLine += DEBUG_LINE_SIZE;
-//			}
 		}
 
 #endif	//if DEBUG==1
@@ -1320,7 +1311,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 
 void USART1_IRQHandler(void)
 {
-	USARTx_IRQHandler(&pc);
+	USARTx_IRQHandler(&imu);
 }
 
 #if DEBUG==1
@@ -2160,7 +2151,7 @@ static void pcHandler()
 			cross.state = 0;
 		}
 
-		serial_write_str(&pc, updateBuf, strlen(updateBuf));
+		serial_write_str(&imu, updateBuf, strlen(updateBuf));
 	}
 
 	if (trkLiveTimer > 0 && millis >= trkLiveTimer) {
@@ -2173,8 +2164,8 @@ static void pcHandler()
 		trackingPidDeInit();
 	}
 
-	if (serial_available(&pc)) {
-		c = serial_read(&pc);
+	if (serial_available(&imu)) {
+		c = serial_read(&imu);
 		if (c == '$')
 			memset(trackerData.buf, 0, TRK_BUFSIZE);
 		else if (c == '*')
@@ -2299,7 +2290,7 @@ static void motorHandler()
 		memcpy(can1TxBuffer, canSendStabMode.data, canSendStabMode.size);
 		can1TxHeader.DLC = canSendStabMode.size;
 		if (HAL_CAN_AddTxMessage(&hcan1, &can1TxHeader, can1TxBuffer, &can1TxMailBox) == HAL_OK)
-			cSendStabCmd++;
+			cSendMoveMode++;
 		else
 			stabModuleTimer = HAL_GetTick() + 1;
 	}
@@ -2360,7 +2351,7 @@ static void motorJoystickHandler(uint32_t millis)
 		memcpy(can1TxBuffer, canSendMotorCommand.data, canSendMotorCommand.size);
 		can1TxHeader.DLC = canSendMotorCommand.size;
 		if (HAL_CAN_AddTxMessage(&hcan1, &can1TxHeader, can1TxBuffer, &can1TxMailBox) == HAL_OK)
-			cSendMtrCmd++;
+			cSendManCorr++;
 		else
 			sendTimer = HAL_GetTick() + 1;
 
@@ -2416,7 +2407,7 @@ static void motorStabHandler(uint32_t millis)
 
 		for ( int i = 0; i < 4; i++ ) {
 			canSendStabCorrection.data[i] = p.b[i];
-			canSendStabCorrection.data[i + 4] = p.b[i];
+			canSendStabCorrection.data[i + 4] = t.b[i];
 		}
 	}
 
@@ -2426,7 +2417,9 @@ static void motorStabHandler(uint32_t millis)
 		can1TxHeader.StdId = canSendStabCorrection.id;
 		memcpy(can1TxBuffer, canSendStabCorrection.data, canSendStabCorrection.size);
 		can1TxHeader.DLC = canSendStabCorrection.size;
-		if (HAL_CAN_AddTxMessage(&hcan1, &can1TxHeader, can1TxBuffer, &can1TxMailBox) != HAL_OK)
+		if (HAL_CAN_AddTxMessage(&hcan1, &can1TxHeader, can1TxBuffer, &can1TxMailBox) == HAL_OK)
+			cSendStabCorr++;
+		else
 			sendTimer = HAL_GetTick() + 1;
 	}
 }
@@ -2501,7 +2494,9 @@ static void motorTrackingHandler(uint32_t millis)
 		can1TxHeader.StdId = canSendTrackCorrection.id;
 		memcpy(can1TxBuffer, canSendTrackCorrection.data, canSendTrackCorrection.size);
 		can1TxHeader.DLC = canSendTrackCorrection.size;
-		if (HAL_CAN_AddTxMessage(&hcan1, &can1TxHeader, can1TxBuffer, &can1TxMailBox) != HAL_OK)
+		if (HAL_CAN_AddTxMessage(&hcan1, &can1TxHeader, can1TxBuffer, &can1TxMailBox) == HAL_OK)
+			cSendTrackCorr++;
+		else
 			sendTimer = HAL_GetTick() + 1;
 	}
 

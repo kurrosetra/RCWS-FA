@@ -5,7 +5,7 @@
  *      Author: miftakur
  */
 
-#include <ring_buffer.h>
+#include "ring_buffer.h"
 
 void ring_buffer_read_str(Ring_Buffer_t *buffer, char *str)
 {

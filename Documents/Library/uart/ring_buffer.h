@@ -8,7 +8,7 @@
 #ifndef RING_BUFFER_H_
 #define RING_BUFFER_H_
 
-#include <ring_buffer_config.h>
+#include "ring_buffer_config.h"
 #include <stdbool.h>
 #include <stdint-gcc.h>
 
