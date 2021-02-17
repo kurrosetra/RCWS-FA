@@ -12,7 +12,7 @@
 
 Konstanta_PID_t kPID[4];
 
-const Konstanta_PID_t kPID_0 = { 0, 1.8, 0.6, 0.0, 0.0, 0.006, 0.0005, 1 };
+const Konstanta_PID_t kPID_0 = { 0, 0.65, 0.5, 0.05, 1.2, 0.5, 0.8, 0 };
 const Konstanta_PID_t kPID_1 = { 1, 0.1, 0.07, 1.0, 0.8, 4, 0.3, 0 };
 const Konstanta_PID_t kPID_2 = { 2, 0.05, 0.03, 0.0, 0.0, 0.0, 0.0, 2 };
 const Konstanta_PID_t kPID_3 = { 3, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0 };

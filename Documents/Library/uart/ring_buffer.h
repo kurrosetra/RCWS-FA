@@ -8,7 +8,7 @@
 #ifndef RING_BUFFER_H_
 #define RING_BUFFER_H_
 
-#include <ring_buffer_config.h>
+#include "ring_buffer_config.h"
 #include <stdbool.h>
 #include <stdint-gcc.h>
 
@@ -27,5 +27,6 @@ void ring_buffer_write(Ring_Buffer_t *buffer, char c);
 void ring_buffer_read_str(Ring_Buffer_t *buffer, char *str);
 char ring_buffer_read(Ring_Buffer_t *buffer);
 bool ring_buffer_available(Ring_Buffer_t *buffer);
+uint16_t ring_buffer_left(Ring_Buffer_t *buffer);
 
 #endif /* RING_BUFFER_H_ */
