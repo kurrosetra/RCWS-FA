@@ -2200,7 +2200,8 @@ static void pcHandler()
 					free(tokens);
 					trkLiveTimer = millis + 1000;
 					/* re-init PID when target re-appear */
-					trackingPidInit();
+					if (trackingMode == MOVEMENT_MODE_ON)
+						trackingPidInit();
 				}	//if (tokens)
 				cTrackTelemetry++;
 			}	//if (s)
