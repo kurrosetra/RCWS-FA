@@ -276,7 +276,7 @@ CAN_RxHeaderTypeDef can1RxHeader;
 uint32_t can1TxMailBox;
 uint8_t can1TxBuffer[CAN_BUFSIZE];
 uint8_t can1RxBuffer[CAN_BUFSIZE];
-const uint32_t CAN_RECEIVE_TIMEOUT = 500;
+const uint32_t CAN_RECEIVE_TIMEOUT = 1000;
 
 volatile bool canTransmitState = false;
 
@@ -544,8 +544,8 @@ int main(void)
 #if DEBUG==1
 	uint32_t battTimer = 1000;
 
-	char cmdPID[UART_BUFSIZE];
-	Konstanta_PID_t pid;
+//	char cmdPID[UART_BUFSIZE];
+//	Konstanta_PID_t pid;
 #endif	//if DEBUG==1
 
 	uint32_t _countTimer = 0;
@@ -1860,6 +1860,7 @@ static void canRecvHandler()
 	static uint32_t recvOptCamTimer = 0;
 	static uint32_t recvOptLrfTimer = 0;
 	static uint32_t recvMotorTimer = 0;
+	static uint32_t recvImuTimer = 0;
 	uint8_t _u8, _zoomLevel;
 	uint16_t lrfVal;
 
@@ -1985,6 +1986,26 @@ static void canRecvHandler()
 
 	}
 
+	if (canRecvStackerYPR.state) {
+		canRecvStackerYPR.state = false;
+		recvImuTimer = HAL_GetTick() + CAN_RECEIVE_TIMEOUT;
+		canRecvStackerYPR.online = true;
+
+		int16_t yaw = (int16_t) canRecvStackerYPR.data[1] << 8 | canRecvStackerYPR.data[0];
+		int16_t pitch = (int16_t) canRecvStackerYPR.data[3] << 8 | canRecvStackerYPR.data[2];
+		int16_t roll = (int16_t) canRecvStackerYPR.data[5] << 8 | canRecvStackerYPR.data[4];
+		ypr[0] = (float) yaw / 10.0f;
+		ypr[1] = (float) pitch / 10.0f;
+		ypr[2] = (float) roll / 10.0f;
+	}
+
+	if (canRecvStackerYPR.online) {
+		if (HAL_GetTick() >= recvImuTimer) {
+			canRecvStackerYPR.online = 0;
+			memset(canRecvStackerYPR.data, 0, canRecvStackerYPR.size);
+			ypr[0] = ypr[1] = ypr[2] = 0.0f;
+		}
+	}
 }
 
 static uint16_t battVoltActual(uint8_t v)
@@ -2104,7 +2125,7 @@ static void pcHandler()
 		sendTimer = millis + 100;
 
 		if (lrfData.distance < 30 && lrfData.distance > 0)
-			sprintf(updateBuf, "$LRVAL,Error:%d*$AZVAL,%.2f*$ELVAL,%.2f*", lrfData.distance, ypr[0],
+			sprintf(updateBuf, "$LRVAL,Error:%d*$AZVAL,%.1f*$ELVAL,%.2f*", lrfData.distance, ypr[0],
 					ypr[1]);
 		else
 			sprintf(updateBuf, "$LRVAL,%d m*$AZVAL,%.2f*$ELVAL,%.2f*", lrfData.distance, ypr[0],
@@ -2463,6 +2484,8 @@ static void motorTrackingHandler(uint32_t millis)
 			if (_u8 > 2)
 				_u8 = 2;
 		}
+		else
+			_u8 = 3;
 
 		/* convert to motor value */
 		if (trackingMode == MOVEMENT_MODE_ON) {

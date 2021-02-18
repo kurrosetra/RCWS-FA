@@ -13,9 +13,9 @@
 Konstanta_PID_t kPID[4];
 
 const Konstanta_PID_t kPID_0 = { 0, 0.65, 0.5, 0.05, 1.2, 0.5, 0.8, 0 };
-const Konstanta_PID_t kPID_1 = { 1, 0.1, 0.07, 1.0, 0.8, 4, 0.3, 0 };
-const Konstanta_PID_t kPID_2 = { 2, 0.05, 0.03, 0.0, 0.0, 0.0, 0.0, 2 };
-const Konstanta_PID_t kPID_3 = { 3, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0 };
+const Konstanta_PID_t kPID_1 = { 1, 0.07, 0.063, 0.03, 0.05, 0.009, 0.02, 0 };
+const Konstanta_PID_t kPID_2 = { 2, 0.0356, 0.027, 0.0, 0.001, 0.031, 0.0001, 0 };
+const Konstanta_PID_t kPID_3 = { 3, 0.25, 0.15, 0.015, 0.38, 0.15, 0.23, 0 };
 
 // PID Params
 //float kp1 = 1, kp2 = 1;
