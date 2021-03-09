@@ -49,3 +49,5 @@ test/
 *.launch
 *.s
 *.ld
+*.ftl
+
